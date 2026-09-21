@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build output
+dist/
+build/
+*.egg-info/
+
+# Environment & secrets
+.env
+*.local
+auth.db
+*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Benchmark data (large files)
+/eval-suite/runs/
+/eval-suite/history.jsonl
+/eval-suite/latest_report.json
+
+# Frontend public assets (keep logos but ignore generated)
+/frontend/dist/
+/frontend/*.local

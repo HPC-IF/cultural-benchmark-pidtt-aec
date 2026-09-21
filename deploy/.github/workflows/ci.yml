@@ -1,0 +1,348 @@
+name: CI — Build, Test & Deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Allow manual triggers
+
+# Prevent concurrent deployments (queue only, don't cancel builds)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ─── Lint + Audit (fast gate — runs on push + PR) ─────────────────
+  lint-and-audit:
+    name: Lint & Security Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./website
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npx eslint "src/**/*.{ts,tsx}" --max-warnings=0
+
+      - name: Security audit
+        run: npm audit --audit-level=high || true
+        # Non-blocking: audit warns but doesn't fail the pipeline
+
+      - name: Check for hardcoded secrets
+        uses: trufflesecurity/trufflehog@v3
+        with:
+          directory: ./website
+          extra_args: --only-verified
+
+  # ─── Build + Test ─────────────────────────────────────────────────
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    needs: lint-and-audit
+    defaults:
+      run:
+        working-directory: ./website
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: website/package-lock.json
+
+      - name: Cache Vite build
+        uses: actions/cache@v4
+        with:
+          path: website/node_modules/.vite
+          key: ${{ runner.os }}-vite-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-vite-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npx vitest run
+        env:
+          CI: true
+
+      - name: Build production bundle
+        run: npx vite build
+        env:
+          # Embed git metadata into the build for traceability
+          COMMIT_SHA: ${{ github.sha }}
+          BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+
+      - name: Upload build artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: website/dist
+          retention-days: 2
+          if-no-files-found: error
+
+      - name: Upload server files
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: server
+          path: |
+            website/server.js
+            website/ecosystem.config.js
+            website/package.json
+            website/package-lock.json
+            website/.nvmrc
+          retention-days: 2
+
+  # ─── Deploy to Staging (on PR) ───────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    needs: test
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.sha == github.sha
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to staging container
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PROXMOX_HOST }}
+          username: ${{ secrets.PROXMOX_USER }}
+          key: ${{ secrets.PROXMOX_SSH_KEY }}
+          script: |
+            set -e
+            CONTAINER_ID=${{ vars.STAGING_CONTAINER_ID || '1002' }}
+            DEPLOY_DIR="/opt/citecca-staging"
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            BRANCH_NAME="${{ github.head_ref }}"
+
+            echo "[+] Staging deploy — PR #${PR_NUMBER} (${BRANCH_NAME})"
+            echo "[+] Container: ${CONTAINER_ID} | Branch: ${BRANCH_NAME}"
+
+            # Notify staging deployment
+            echo "Staging deployed: PR #${PR_NUMBER} from ${BRANCH_NAME}"
+
+  # ─── Deploy to Production (main branch only) ─────────────────────
+  deploy:
+    name: Deploy to Production
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: website/dist
+
+      - name: Download server files
+        uses: actions/download-artifact@v4
+        with:
+          name: server
+          path: website/
+
+      - name: Deploy to LXC container
+        id: deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PROXMOX_HOST }}
+          username: ${{ secrets.PROXMOX_USER }}
+          key: ${{ secrets.PROXMOX_SSH_KEY }}
+          script: |
+            set -e
+            CONTAINER_ID=1001
+            DEPLOY_DIR="/opt/citecca-website"
+            BACKUP_DIR="/opt/backups"
+            TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+            COMMIT_SHA="${{ github.sha }}"
+            COMMIT_MSG="${{ github.event.head_commit.message }}"
+            REF="${{ github.ref_name }}"
+
+            echo "========================================"
+            echo "  CITECCA Production Deployment"
+            echo "  Commit: ${COMMIT_SHA:0:8}"
+            echo "  Message: ${COMMIT_MSG}"
+            echo "  Branch: ${REF}"
+            echo "  Timestamp: ${TIMESTAMP}"
+            echo "========================================"
+
+            # Backup current deployment
+            echo "[1/6] Creating backup..."
+            pct exec $CONTAINER_ID -- bash -c "mkdir -p $BACKUP_DIR && cp -a $DEPLOY_DIR $BACKUP_DIR/$TIMESTAMP"
+
+            # Copy new build + server files
+            echo "[2/6] Copying build artifacts..."
+            pct exec $CONTAINER_ID -- bash -c "mkdir -p $DEPLOY_DIR/dist"
+
+            tar -cz -C "$(pwd)/website/dist" . | pct exec $CONTAINER_ID -- tar -C "$DEPLOY_DIR/dist" -xzf -
+
+            # Copy server files (server.js, ecosystem.config.js, package.json, etc.)
+            tar -cz -C "$(pwd)/website" server.js ecosystem.config.js package.json package-lock.json .nvmrc | \
+              pct exec $CONTAINER_ID -- tar -C "$DEPLOY_DIR" -xzf -
+
+            # Write deployment metadata
+            echo "[3/6] Writing deployment metadata..."
+            pct exec $CONTAINER_ID -- bash -c "cat > $DEPLOY_DIR/.deployment << EOF
+            {
+              \"commit\": \"$COMMIT_SHA\",
+              \"short_sha\": \"${COMMIT_SHA:0:8}\",
+              \"message\": \"$(echo "$COMMIT_MSG" | sed 's/"/\\"/g')\",
+              \"branch\": \"$REF\",
+              \"timestamp\": \"$TIMESTAMP\",
+              \"deployed_at\": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            }
+            EOF"
+
+            # Install server deps
+            echo "[4/6] Installing production dependencies..."
+            pct exec $CONTAINER_ID -- bash -c "cd $DEPLOY_DIR && npm ci --omit=dev --silent 2>/dev/null || npm install --omit=dev --silent 2>/dev/null"
+
+            # Zero-downtime PM2 reload
+            echo "[5/6] Reloading PM2 (zero-downtime)..."
+            pct exec $CONTAINER_ID -- bash -c "cd $DEPLOY_DIR && pm2 reload citecca-website --update-env"
+
+            # Health check
+            echo "[6/6] Running health check..."
+            for i in {1..15}; do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://192.168.1.200/ 2>/dev/null) || STATUS="000"
+              if [ "$STATUS" = "200" ]; then
+                echo "[✓] Health check passed (HTTP $STATUS) on attempt $i/15"
+                echo "deploy_status=success" >> $GITHUB_OUTPUT
+
+                # Cleanup old backups (keep last 5)
+                pct exec $CONTAINER_ID -- bash -c "ls -td $BACKUP_DIR/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf" 2>/dev/null || true
+                exit 0
+              fi
+              echo "[!] Attempt $i/15: HTTP $STATUS — waiting..."
+              sleep 2
+            done
+
+            # Rollback on failure
+            echo "[-] Health check failed — initiating rollback..."
+            LATEST=$(pct exec $CONTAINER_ID -- bash -c "ls -td $BACKUP_DIR/*/ 2>/dev/null | head -1")
+            pct exec $CONTAINER_ID -- bash -c "rm -rf ${DEPLOY_DIR}/* && cp -a ${LATEST}/* ${DEPLOY_DIR}/"
+            pct exec $CONTAINER_ID -- bash -c "cd $DEPLOY_DIR && pm2 reload citecca-website --update-env"
+
+            # Verify rollback health
+            sleep 3
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://192.168.1.200/ 2>/dev/null) || STATUS="000"
+            if [ "$STATUS" = "200" ]; then
+              echo "[✓] Rollback successful (HTTP $STATUS)"
+              echo "deploy_status=rollback" >> $GITHUB_OUTPUT
+            else
+              echo "[-] Rollback also failed (HTTP $STATUS) — manual intervention required!"
+              pct exec $CONTAINER_ID -- bash -c "pm2 logs citecca-website --lines 50"
+              echo "deploy_status=failed" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Deployment Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ steps.deploy.outputs.deploy_status == 'success' && '✅ Success' || steps.deploy.outputs.deploy_status == 'rollback' && '⚠️ Rolled Back' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Author**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify deployment result
+        if: always()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "🚀 CITECCA Deployment: ${{ steps.deploy.outputs.deploy_status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*CITECCA Deployment*\n• Status: ${{ steps.deploy.outputs.deploy_status == 'success' && '✅' || steps.deploy.outputs.deploy_status == 'rollback' && '⚠️ Rollback' || '❌ Failed' }}\n• Commit: `${{ github.sha }}`\n• Branch: `${{ github.ref_name }}`\n• Author: ${{ github.actor }}\n• Link: ${{ github.event.compare || github.event.head_commit.url }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  # ─── Tag release on successful deploy ─────────────────────────────
+  tag-release:
+    name: Tag Release
+    needs: deploy
+    if: always() && needs.deploy.result == 'success' && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and tag
+        id: tag
+        run: |
+          # Get last tag or use v1.0.0 as base
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")
+          # Increment patch version
+          BUMPED="${LAST_TAG/v/}.0.1"
+          NEW_TAG="v${BUMPED}"
+
+          echo "Last tag: ${LAST_TAG}"
+          echo "New tag: ${NEW_TAG}"
+          echo "tag=${NEW_TAG}" >> $GITHUB_OUTPUT
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEW_TAG" -m "Release ${NEW_TAG}\n\nCommit: ${{ github.sha }}\nAuthor: ${{ github.actor }}\nDate: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin "$NEW_TAG"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "Release ${{ steps.tag.outputs.tag }}"
+          generate_release_notes: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

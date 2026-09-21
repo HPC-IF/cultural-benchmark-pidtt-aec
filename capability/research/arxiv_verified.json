@@ -1,0 +1,272 @@
+{
+ "2410.02677": {
+  "title": "CulturalBench: A Robust, Diverse, and Challenging Cultural Benchmark by Human-AI CulturalTeaming",
+  "abstract": "Robust, diverse, and challenging cultural knowledge benchmarks are essential for measuring our progress towards making LMs that are helpful across diverse cultures. We introduce CulturalBench: a set of 1,696 human-written and human-verified questions to assess LMs' cultural knowledge, covering 45 global regions including underrepresented ones like Bangladesh, Zimbabwe, and Peru. Questions are each verified by five independent annotators and span 17 diverse topics ranging from food preferences to greeting etiquette. We construct CulturalBench using methods inspired by Human-AI Red-Teaming. Compared to human performance (92.4% accuracy), the hard version of CulturalBench is challenging even for the best-performing frontier LMs, ranging from 28.7% to 61.5% in accuracy. We find that LMs often struggle with tricky questions that have multiple correct answers (e.g., What utensils do the Chinese usually use?), revealing a tendency to overfit to a single answer. Our results indicate that GPT-4o substantially outperform other models across cultures, besting local providers (e.g., Mistral on European culture and DeepSeek on Chinese culture). Across the board, models under-perform on questions related to North Africa, South America and Middle East.",
+  "published": "2024-10-03",
+  "authors": [
+   "Yu Ying Chiu",
+   "Liwei Jiang",
+   "Bill Yuchen Lin",
+   "Chan Young Park",
+   "Shuyue Stella Li",
+   "Sahithya Ravi",
+   "Mehar Bhatia",
+   "Maria Antoniak",
+   "Yulia Tsvetkov",
+   "Vered Shwartz",
+   "Yejin Choi"
+  ]
+ },
+ "2406.03368": {
+  "title": "IrokoBench: A New Benchmark for African Languages in the Age of Large Language Models",
+  "abstract": "Despite the widespread adoption of Large language models (LLMs), their remarkable capabilities remain limited to a few high-resource languages. Additionally, many low-resource languages (\\eg African languages) are often evaluated only on basic text classification tasks due to the lack of appropriate or comprehensive benchmarks outside of high-resource languages. In this paper, we introduce IrokoBench -- a human-translated benchmark dataset for 17 typologically-diverse low-resource African languages covering three tasks: natural language inference~(AfriXNLI), mathematical reasoning~(AfriMGSM), and multi-choice knowledge-based question answering~(AfriMMLU). We use IrokoBench to evaluate zero-shot, few-shot, and translate-test settings~(where test sets are translated into English) across 10 open and six proprietary LLMs. Our evaluation reveals a significant performance gap between high-resource languages~(such as English and French) and low-resource African languages. We observe a significant performance gap between open and proprietary models, with the highest performing open model, Gemma 2 27B only at 63\\% of the best-performing proprietary model GPT-4o performance. In addition, machine translating the test set to English before evaluation helped to close the gap for larger models that are English-centric, such as Gemma 2 27B and LLaMa 3.1 70B. These findings suggest that more efforts are needed to develop and adapt LLMs for African languages.",
+  "published": "2024-06-05",
+  "authors": [
+   "David Ifeoluwa Adelani",
+   "Jessica Ojo",
+   "Israel Abebe Azime",
+   "Jian Yun Zhuang",
+   "Jesujoba O. Alabi",
+   "Xuanli He",
+   "Millicent Ochieng",
+   "Sara Hooker",
+   "Andiswa Bukula",
+   "En-Shiun Annie Lee",
+   "Chiamaka Chukwuneke",
+   "Happy Buzaaba",
+   "Blessing Sibanda",
+   "Godson Kalipe",
+   "Jonathan Mukiibi",
+   "Salomon Kabongo",
+   "Foutse Yuehgoh",
+   "Mmasibidi Setaka",
+   "Lolwethu Ndolela",
+   "Nkiruka Odu",
+   "Rooweither Mabuya",
+   "Shamsuddeen Hassan Muhammad",
+   "Salomey Osei",
+   "Sokhar Samb",
+   "Tadesse Kebede Guge",
+   "Tombekai Vangoni Sherman",
+   "Pontus Stenetorp"
+  ]
+ },
+ "2503.17485": {
+  "title": "SaudiCulture: A Benchmark for Evaluating Large Language Models Cultural Competence within Saudi Arabia",
+  "abstract": "Large Language Models (LLMs) have demonstrated remarkable capabilities in natural language processing; however, they often struggle to accurately capture and reflect cultural nuances. This research addresses this challenge by focusing on Saudi Arabia, a country characterized by diverse dialects and rich cultural traditions. We introduce SaudiCulture, a novel benchmark designed to evaluate the cultural competence of LLMs within the distinct geographical and cultural contexts of Saudi Arabia. SaudiCulture is a comprehensive dataset of questions covering five major geographical regions, such as West, East, South, North, and Center, along with general questions applicable across all regions. The dataset encompasses a broad spectrum of cultural domains, including food, clothing, entertainment, celebrations, and crafts. To ensure a rigorous evaluation, SaudiCulture includes questions of varying complexity, such as open-ended, single-choice, and multiple-choice formats, with some requiring multiple correct answers. Additionally, the dataset distinguishes between common cultural knowledge and specialized regional aspects. We conduct extensive evaluations on five LLMs, such as GPT-4, Llama 3.3, FANAR, Jais, and AceGPT, analyzing their performance across different question types and cultural contexts. Our findings reveal that all models experience significant performance declines when faced with highly specialized or region-specific questions, particularly those requiring multiple correct responses. Additionally, certain cultural categories are more easily identifiable than others, further highlighting inconsistencies in LLMs cultural understanding. These results emphasize the importance of incorporating region-specific knowledge into LLMs training to enhance their cultural competence.",
+  "published": "2025-03-21",
+  "authors": [
+   "Lama Ayash",
+   "Hassan Alhuzali",
+   "Ashwag Alasmari",
+   "Sultan Aloufi"
+  ]
+ },
+ "2411.00860": {
+  "title": "Survey of Cultural Awareness in Language Models: Text and Beyond",
+  "abstract": "Large-scale deployment of large language models (LLMs) in various applications, such as chatbots and virtual assistants, requires LLMs to be culturally sensitive to the user to ensure inclusivity. Culture has been widely studied in psychology and anthropology, and there has been a recent surge in research on making LLMs more culturally inclusive in LLMs that goes beyond multilinguality and builds on findings from psychology and anthropology. In this paper, we survey efforts towards incorporating cultural awareness into text-based and multimodal LLMs. We start by defining cultural awareness in LLMs, taking the definitions of culture from anthropology and psychology as a point of departure. We then examine methodologies adopted for creating cross-cultural datasets, strategies for cultural inclusion in downstream tasks, and methodologies that have been used for benchmarking cultural awareness in LLMs. Further, we discuss the ethical implications of cultural alignment, the role of Human-Computer Interaction in driving cultural inclusion in LLMs, and the role of cultural alignment in driving social science research. We finally provide pointers to future research based on our findings about gaps in the literature.",
+  "published": "2024-10-30",
+  "authors": [
+   "Siddhesh Pawar",
+   "Junyeong Park",
+   "Jiho Jin",
+   "Arnav Arora",
+   "Junho Myung",
+   "Srishti Yadav",
+   "Faiz Ghifari Haznitrama",
+   "Inhwa Song",
+   "Alice Oh",
+   "Isabelle Augenstein"
+  ]
+ },
+ "2608.02996": {
+  "title": "On the missing benchmarks layer and a potential solution",
+  "abstract": "Latin America is missing a foundational layer for native AI development: the benchmark layer. The benchmark layer does two things no other layer can - it audits AI systems against regional social requirements and it directs AI optimization in economically relevant environments. Without it, public institutions cannot independently evaluate foreign AI systems, and companies cannot optimize AI systems to solve local problems with SOTA performance. The cost of the missing layer is dual: a loss of auditability and a loss of optimization direction over a technology that is increasingly critical infrastructure. We propose an EvalsHub, with LatamBoard as its first regional instance - an open, task-first benchmark infrastructure where universities, public institutions, professional communities, and companies can publish, execute, compare, and maintain evaluations across models, workflows, and agents. Built once, measured forever - re-run by institutions as new AI systems ship and by industry teams after every system change. Open by design and incentive-driven by construction.",
+  "published": "2026-08-04",
+  "authors": [
+   "Francis F Daniel",
+   "Mauro Iba\u00f1ez",
+   "Francis Perelman",
+   "Marian Basti"
+  ]
+ },
+ "2608.02949": {
+  "title": "On the missing data layer and a potential solution",
+  "abstract": "Latin America is missing two foundational layers of AI infrastructure: the dataset layer and the benchmark layer. This paper targets the dataset layer. The dataset layer faces two compounding problems: discovery and supply. Latin American AI datasets exist but are scattered across platforms with no shared index. Even with perfect indexing, the total volume would remain far below what frontier AI development requires. We propose DataHub: a task-first data infrastructure organized through the ontology /<task?>/<domain?>/<language?>, with mechanisms for dataset discovery, metadata, contribution, licensing, and reuse.",
+  "published": "2026-08-03",
+  "authors": [
+   "Francis F Daniel",
+   "Mauro Iba\u00f1ez",
+   "Francis Perelman",
+   "Marian Basti"
+  ]
+ },
+ "2402.09369": {
+  "title": "Massively Multi-Cultural Knowledge Acquisition & LM Benchmarking",
+  "abstract": "Pretrained large language models have revolutionized many applications but still face challenges related to cultural bias and a lack of cultural commonsense knowledge crucial for guiding cross-culture communication and interactions. Recognizing the shortcomings of existing methods in capturing the diverse and rich cultures across the world, this paper introduces a novel approach for massively multicultural knowledge acquisition. Specifically, our method strategically navigates from densely informative Wikipedia documents on cultural topics to an extensive network of linked pages. Leveraging this valuable source of data collection, we construct the CultureAtlas dataset, which covers a wide range of sub-country level geographical regions and ethnolinguistic groups, with data cleaning and preprocessing to ensure textual assertion sentence self-containment, as well as fine-grained cultural profile information extraction. Our dataset not only facilitates the evaluation of language model performance in culturally diverse contexts but also serves as a foundational tool for the development of culturally sensitive and aware language models. Our work marks an important step towards deeper understanding and bridging the gaps of cultural disparities in AI, to promote a more inclusive and balanced representation of global cultures in the digital domain.",
+  "published": "2024-02-14",
+  "authors": [
+   "Yi Fung",
+   "Ruining Zhao",
+   "Jae Doo",
+   "Chenkai Sun",
+   "Heng Ji"
+  ]
+ },
+ "2310.18018": {
+  "title": "NLP Evaluation in trouble: On the Need to Measure LLM Data Contamination for each Benchmark",
+  "abstract": "In this position paper, we argue that the classical evaluation on Natural Language Processing (NLP) tasks using annotated benchmarks is in trouble. The worst kind of data contamination happens when a Large Language Model (LLM) is trained on the test split of a benchmark, and then evaluated in the same benchmark. The extent of the problem is unknown, as it is not straightforward to measure. Contamination causes an overestimation of the performance of a contaminated model in a target benchmark and associated task with respect to their non-contaminated counterparts. The consequences can be very harmful, with wrong scientific conclusions being published while other correct ones are discarded. This position paper defines different levels of data contamination and argues for a community effort, including the development of automatic and semi-automatic measures to detect when data from a benchmark was exposed to a model, and suggestions for flagging papers with conclusions that are compromised by data contamination.",
+  "published": "2023-10-27",
+  "authors": [
+   "Oscar Sainz",
+   "Jon Ander Campos",
+   "Iker Garc\u00eda-Ferrero",
+   "Julen Etxaniz",
+   "Oier Lopez de Lacalle",
+   "Eneko Agirre"
+  ]
+ },
+ "2309.12053": {
+  "title": "AceGPT, Localizing Large Language Models in Arabic",
+  "abstract": "This paper is devoted to the development of a localized Large Language Model (LLM) specifically for Arabic, a language imbued with unique cultural characteristics inadequately addressed by current mainstream models. Significant concerns emerge when addressing cultural sensitivity and local values. To address this, the paper proposes a comprehensive solution that includes further pre-training with Arabic texts, Supervised Fine-Tuning (SFT) utilizing native Arabic instructions, and GPT-4 responses in Arabic, alongside Reinforcement Learning with AI Feedback (RLAIF) employing a reward model attuned to local culture and values. The goal is to cultivate culturally cognizant and value-aligned Arabic LLMs capable of accommodating the diverse, application-specific needs of Arabic-speaking communities. Comprehensive evaluations reveal that the resulting model, dubbed `AceGPT', sets the state-of-the-art standard for open Arabic LLMs across various benchmarks. Codes, data, and models are in https://github.com/FreedomIntelligence/AceGPT.",
+  "published": "2023-09-21",
+  "authors": [
+   "Huang Huang",
+   "Fei Yu",
+   "Jianqing Zhu",
+   "Xuening Sun",
+   "Hao Cheng",
+   "Dingjie Song",
+   "Zhihong Chen",
+   "Abdulmohsen Alharthi",
+   "Bang An",
+   "Juncai He",
+   "Ziche Liu",
+   "Zhiyi Zhang",
+   "Junying Chen",
+   "Jianquan Li",
+   "Benyou Wang",
+   "Lian Zhang",
+   "Ruoyu Sun",
+   "Xiang Wan",
+   "Haizhou Li",
+   "Jinchao Xu"
+  ]
+ },
+ "2306.05685": {
+  "title": "Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena",
+  "abstract": "Evaluating large language model (LLM) based chat assistants is challenging due to their broad capabilities and the inadequacy of existing benchmarks in measuring human preferences. To address this, we explore using strong LLMs as judges to evaluate these models on more open-ended questions. We examine the usage and limitations of LLM-as-a-judge, including position, verbosity, and self-enhancement biases, as well as limited reasoning ability, and propose solutions to mitigate some of them. We then verify the agreement between LLM judges and human preferences by introducing two benchmarks: MT-bench, a multi-turn question set; and Chatbot Arena, a crowdsourced battle platform. Our results reveal that strong LLM judges like GPT-4 can match both controlled and crowdsourced human preferences well, achieving over 80% agreement, the same level of agreement between humans. Hence, LLM-as-a-judge is a scalable and explainable way to approximate human preferences, which are otherwise very expensive to obtain. Additionally, we show our benchmark and traditional benchmarks complement each other by evaluating several variants of LLaMA and Vicuna. The MT-bench questions, 3K expert votes, and 30K conversations with human preferences are publicly available at https://github.com/lm-sys/FastChat/tree/main/fastchat/llm_judge.",
+  "published": "2023-06-09",
+  "authors": [
+   "Lianmin Zheng",
+   "Wei-Lin Chiang",
+   "Ying Sheng",
+   "Siyuan Zhuang",
+   "Zhanghao Wu",
+   "Yonghao Zhuang",
+   "Zi Lin",
+   "Zhuohan Li",
+   "Dacheng Li",
+   "Eric P. Xing",
+   "Hao Zhang",
+   "Joseph E. Gonzalez",
+   "Ion Stoica"
+  ]
+ },
+ "2601.15550": {
+  "title": "Common to Whom? Regional Cultural Commonsense and LLM Bias in India",
+  "abstract": "Existing cultural commonsense benchmarks treat nations as monolithic, assuming uniform practices within national boundaries. But does cultural commonsense hold uniformly within a nation, or does it vary at the sub-national level? We introduce Indica, the first benchmark designed to test LLMs' ability to address this question, focusing on India - a nation of 28 states, 8 union territories, and 22 official languages. We collect human-annotated answers from five Indian regions (North, South, East, West, and Central) across 515 questions spanning 8 domains of everyday life, yielding 1,630 region-specific question-answer pairs. Strikingly, only 39.4% of questions elicit agreement across all five regions, demonstrating that cultural commonsense in India is predominantly regional, not national. We evaluate eight state-of-the-art LLMs and find two critical gaps: models achieve only 13.4%-20.9% accuracy on region-specific questions, and they exhibit geographic bias, over-selecting Central and North India as the \"default\" (selected 30-40% more often than expected) while under-representing East and West. Beyond India, our methodology provides a generalizable framework for evaluating cultural commonsense in any culturally heterogeneous nation, from question design grounded in anthropological taxonomy, to regional data collection, to bias measurement.",
+  "published": "2026-01-22",
+  "authors": [
+   "Sangmitra Madhusudan",
+   "Trush Shashank More",
+   "Steph Buongiorno",
+   "Renata Dividino",
+   "Jad Kabbara",
+   "Ali Emami"
+  ]
+ },
+ "2604.03493": {
+  "title": "Cultural Authenticity: Comparing LLM Cultural Representations to Native Human Expectations",
+  "abstract": "Cultural representation in Large Language Model (LLM) outputs has primarily been evaluated through the proxies of cultural diversity and factual accuracy. However, a crucial gap remains in assessing cultural alignment: the degree to which generated content mirrors how native populations perceive and prioritize their own cultural facets. In this paper, we introduce a human-centered framework to evaluate the alignment of LLM generations with local expectations. First, we establish a human-derived ground-truth baseline of importance vectors, called Cultural Importance Vectors based on an induced set of culturally significant facets from open-ended survey responses collected across nine countries. Next, we introduce a method to compute model-derived Cultural Representation Vectors of an LLM based on a syntactically diversified prompt-set and apply it to three frontier LLMs (Gemini 2.5 Pro, GPT-4o, and Claude 3.5 Haiku). Our investigation of the alignment between the human-derived Cultural Importance and model-derived Cultural Representations reveals a Western-centric calibration for some of the models where alignment decreases as a country's cultural distance from the US increases. Furthermore, we identify highly correlated, systemic error signatures ($\u03c1> 0.97$) across all models, which over-index on some cultural markers while neglecting the deep-seated social and value-based priorities of users. Our approach moves beyond simple diversity metrics toward evaluating the fidelity of AI-generated content in authentically capturing the nuanced hierarchies of global cultures.",
+  "published": "2026-04-03",
+  "authors": [
+   "Erin MacMurray van Liemt",
+   "Aida Davani",
+   "Sinchana Kumbale",
+   "Neha Dixit",
+   "Sunipa Dev"
+  ]
+ },
+ "2411.10915": {
+  "title": "Bias in Large Language Models: Origin, Evaluation, and Mitigation",
+  "abstract": "Large Language Models (LLMs) have revolutionized natural language processing, but their susceptibility to biases poses significant challenges. This comprehensive review examines the landscape of bias in LLMs, from its origins to current mitigation strategies. We categorize biases as intrinsic and extrinsic, analyzing their manifestations in various NLP tasks. The review critically assesses a range of bias evaluation methods, including data-level, model-level, and output-level approaches, providing researchers with a robust toolkit for bias detection. We further explore mitigation strategies, categorizing them into pre-model, intra-model, and post-model techniques, highlighting their effectiveness and limitations. Ethical and legal implications of biased LLMs are discussed, emphasizing potential harms in real-world applications such as healthcare and criminal justice. By synthesizing current knowledge on bias in LLMs, this review contributes to the ongoing effort to develop fair and responsible AI systems. Our work serves as a comprehensive resource for researchers and practitioners working towards understanding, evaluating, and mitigating bias in LLMs, fostering the development of more equitable AI technologies.",
+  "published": "2024-11-16",
+  "authors": [
+   "Yufei Guo",
+   "Muzhe Guo",
+   "Juntao Su",
+   "Zhou Yang",
+   "Mengqiu Zhu",
+   "Hongfei Li",
+   "Mengyang Qiu",
+   "Shuo Shuo Liu"
+  ]
+ },
+ "2404.05365": {
+  "title": "NLP Progress in Indigenous Latin American Languages",
+  "abstract": "The paper focuses on the marginalization of indigenous language communities in the face of rapid technological advancements. We highlight the cultural richness of these languages and the risk they face of being overlooked in the realm of Natural Language Processing (NLP). We aim to bridge the gap between these communities and researchers, emphasizing the need for inclusive technological advancements that respect indigenous community perspectives. We show the NLP progress of indigenous Latin American languages and the survey that covers the status of indigenous languages in Latin America, their representation in NLP, and the challenges and innovations required for their preservation and development. The paper contributes to the current literature in understanding the need and progress of NLP for indigenous communities of Latin America, specifically low-resource and indigenous communities in general.",
+  "published": "2024-04-08",
+  "authors": [
+   "Atnafu Lambebo Tonja",
+   "Fazlourrahman Balouchzahi",
+   "Sabur Butt",
+   "Olga Kolesnikova",
+   "Hector Ceballos",
+   "Alexander Gelbukh",
+   "Thamar Solorio"
+  ]
+ },
+ "2410.05229": {
+  "title": "GSM-Symbolic: Understanding the Limitations of Mathematical Reasoning in Large Language Models",
+  "abstract": "Recent advancements in Large Language Models (LLMs) have sparked interest in their formal reasoning capabilities, particularly in mathematics. The GSM8K benchmark is widely used to assess the mathematical reasoning of models on grade-school-level questions. While the performance of LLMs on GSM8K has significantly improved in recent years, it remains unclear whether their mathematical reasoning capabilities have genuinely advanced, raising questions about the reliability of the reported metrics. To address these concerns, we conduct a large-scale study on several SOTA open and closed models. To overcome the limitations of existing evaluations, we introduce GSM-Symbolic, an improved benchmark created from symbolic templates that allow for the generation of a diverse set of questions. GSM-Symbolic enables more controllable evaluations, providing key insights and more reliable metrics for measuring the reasoning capabilities of models.Our findings reveal that LLMs exhibit noticeable variance when responding to different instantiations of the same question. Specifically, the performance of all models declines when only the numerical values in the question are altered in the GSM-Symbolic benchmark. Furthermore, we investigate the fragility of mathematical reasoning in these models and show that their performance significantly deteriorates as the number of clauses in a question increases. We hypothesize that this decline is because current LLMs cannot perform genuine logical reasoning; they replicate reasoning steps from their training data. Adding a single clause that seems relevant to the question causes significant performance drops (up to 65%) across all state-of-the-art models, even though the clause doesn't contribute to the reasoning chain needed for the final answer. Overall, our work offers a more nuanced understanding of LLMs' capabilities and limitations in mathematical reasoning.",
+  "published": "2024-10-07",
+  "authors": [
+   "Iman Mirzadeh",
+   "Keivan Alizadeh",
+   "Hooman Shahrokhi",
+   "Oncel Tuzel",
+   "Samy Bengio",
+   "Mehrdad Farajtabar"
+  ]
+ },
+ "2406.09948": {
+  "title": "BLEnD: A Benchmark for LLMs on Everyday Knowledge in Diverse Cultures and Languages",
+  "abstract": "Large language models (LLMs) often lack culture-specific knowledge of daily life, especially across diverse regions and non-English languages. Existing benchmarks for evaluating LLMs' cultural sensitivities are limited to a single language or collected from online sources such as Wikipedia, which do not reflect the mundane everyday lifestyles of diverse regions. That is, information about the food people eat for their birthday celebrations, spices they typically use, musical instruments youngsters play, or the sports they practice in school is common cultural knowledge but uncommon in easily collected online sources, especially for underrepresented cultures. To address this issue, we introduce BLEnD, a hand-crafted benchmark designed to evaluate LLMs' everyday knowledge across diverse cultures and languages. BLEnD comprises 52.6k question-answer pairs from 16 countries/regions, in 13 different languages, including low-resource ones such as Amharic, Assamese, Azerbaijani, Hausa, and Sundanese. We construct the benchmark to include two formats of questions: short-answer and multiple-choice. We show that LLMs perform better for cultures that are highly represented online, with a maximum 57.34% difference in GPT-4, the best-performing model, in the short-answer format. For cultures represented by mid-to-high-resource languages, LLMs perform better in their local languages, but for cultures represented by low-resource languages, LLMs perform better in English than the local languages. We make our dataset publicly available at: https://github.com/nlee0212/BLEnD.",
+  "published": "2024-06-14",
+  "authors": [
+   "Junho Myung",
+   "Nayeon Lee",
+   "Yi Zhou",
+   "Jiho Jin",
+   "Rifki Afina Putri",
+   "Dimosthenis Antypas",
+   "Hsuvas Borkakoty",
+   "Eunsu Kim",
+   "Carla Perez-Almendros",
+   "Abinew Ali Ayele",
+   "V\u00edctor Guti\u00e9rrez-Basulto",
+   "Yazm\u00edn Ib\u00e1\u00f1ez-Garc\u00eda",
+   "Hwaran Lee",
+   "Shamsuddeen Hassan Muhammad",
+   "Kiwoong Park",
+   "Anar Sabuhi Rzayev",
+   "Nina White",
+   "Seid Muhie Yimam",
+   "Mohammad Taher Pilehvar",
+   "Nedjma Ousidhoum",
+   "Jose Camacho-Collados",
+   "Alice Oh"
+  ]
+ }
+}

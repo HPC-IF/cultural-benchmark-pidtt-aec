@@ -1,0 +1,450 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://surus.lat/schemas/benchmark-spec/v1.0.0",
+  "title": "Culturally Grounded Benchmark Specification",
+  "description": "Machine-readable spec produced by the Cultural Benchmark Design skill. All cultural content must be sourced or flagged PLACEHOLDER; see THREATS.md for misuse.",
+  "type": "object",
+  "required": [
+    "benchmark_identity",
+    "research_question",
+    "construct",
+    "communities",
+    "languages",
+    "modalities",
+    "sampling_plan",
+    "data_provenance",
+    "consent_and_governance",
+    "task_definitions",
+    "annotation_protocol",
+    "metrics",
+    "baselines",
+    "reliability_plan",
+    "validity_plan",
+    "bias_audits",
+    "privacy_risks",
+    "leakage_risks",
+    "known_limitations",
+    "version_history",
+    "community_review_status"
+  ],
+  "properties": {
+    "benchmark_identity": {
+      "type": "object",
+      "required": ["name", "version", "created", "maintainers", "license", "doi_or_identifier"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+        "created": {"type": "string", "format": "date"},
+        "maintainers": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "license": {"type": "string"},
+        "doi_or_identifier": {"type": "string"},
+        "funding_disclosure": {"type": "string"}
+      }
+    },
+    "research_question": {
+      "type": "object",
+      "required": ["question", "purpose", "intended_use", "out_of_scope_use"],
+      "properties": {
+        "question": {"type": "string"},
+        "purpose": {"enum": ["research", "safety", "product", "policy"]},
+        "intended_use": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "out_of_scope_use": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "deployment_context": {"type": "string"}
+      }
+    },
+    "construct": {
+      "type": "object",
+      "required": ["name", "definition", "sub_capabilities", "exclusions"],
+      "properties": {
+        "name": {"type": "string"},
+        "definition": {"type": "string"},
+        "axes": {
+          "type": "array",
+          "items": {"enum": ["knowledge", "reasoning", "adaptation", "authenticity", "safety", "interaction"]},
+          "minItems": 1
+        },
+        "sub_capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "axis", "observable_behaviors"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^SC-\\d+$"},
+              "name": {"type": "string"},
+              "axis": {"enum": ["knowledge", "reasoning", "adaptation", "authenticity", "safety", "interaction"]},
+              "observable_behaviors": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+              "success_examples": {"type": "array", "items": {"type": "string"}},
+              "failure_examples": {"type": "array", "items": {"type": "string"}},
+              "motivating_theory": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["claim", "source_id", "passage"],
+                  "properties": {
+                    "claim": {"type": "string"},
+                    "source_id": {"type": "string"},
+                    "passage": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "exclusions": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+      }
+    },
+    "communities": {
+      "type": "object",
+      "required": ["list", "within_community_variation", "nationality_proxy_statement"],
+      "properties": {
+        "list": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["community_id", "name", "basis"],
+            "properties": {
+              "community_id": {"type": "string", "pattern": "^C-\\d+$"},
+              "name": {"type": "string"},
+              "basis": {"enum": ["linguistic", "regional", "ethnic", "religious", "practice", "diasporic", "mixed"], "description": "basis of community definition; nationality alone is invalid per gate G2"},
+              "nationality_component": {"type": "string", "description": "if nationality appears, the justification and its bounds"}
+            }
+          }
+        },
+        "within_community_variation": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["community_id", "dimensions"],
+            "properties": {
+              "community_id": {"type": "string"},
+              "dimensions": {"type": "array", "minItems": 2, "items": {"type": "string"}}
+            }
+          }
+        },
+        "nationality_proxy_statement": {
+          "type": "string",
+          "description": "explicit declaration: where nationality was used, why, and what it fails to capture"
+        },
+        "consultation_questions": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "languages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["code", "name", "origin_policy"],
+        "properties": {
+          "code": {"type": "string", "description": "BCP-47"},
+          "name": {"type": "string"},
+          "resource_level": {"enum": ["high", "medium", "low", "very_low", "unknown"]},
+          "origin_policy": {"enum": ["original", "translated", "backtranslated_control", "mixed"], "description": "translated only valid where construct axis is transfer/translation"}
+        }
+      }
+    },
+    "modalities": {"type": "array", "minItems": 1, "items": {"enum": ["text", "audio", "image", "video", "interactive", "multi-turn"]}},
+    "sampling_plan": {
+      "type": "object",
+      "required": ["strata", "sampling_unit", "exclusion_ledger"],
+      "properties": {
+        "strata": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["stratum_id", "definition"],
+            "properties": {
+              "stratum_id": {"type": "string", "pattern": "^S-\\d+$"},
+              "definition": {"type": "string"},
+              "target_n": {"type": ["integer", "null"]},
+              "identify_risk": {"type": "boolean", "description": "true if projected n < 5; requires governance review"}
+            }
+          }
+        },
+        "sampling_unit": {"type": "string"},
+        "exclusion_ledger": {
+          "type": "array",
+          "minItems": 1,
+          "description": "every sampling decision states what it excludes",
+          "items": {
+            "type": "object",
+            "required": ["decision", "excludes"],
+            "properties": {"decision": {"type": "string"}, "excludes": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "data_provenance": {
+      "type": "object",
+      "required": ["sources", "translation_share", "contamination_screening"],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["source_id", "kind", "consent_status"],
+            "properties": {
+              "source_id": {"type": "string"},
+              "kind": {"enum": ["community_created", "expert_created", "extracted_public_corpus", "model_photo_generated_human_verified", "other"]},
+              "consent_status": {"enum": ["consented", "public_license_available", "pending", "not_required_public_domain"]},
+              "description": {"type": "string"}
+            }
+          }
+        },
+        "translation_share": {"type": "number", "minimum": 0, "maximum": 1, "description": "fraction of items translated; >0 requires justification in construct"},
+        "contamination_screening": {
+          "type": "object",
+          "required": ["method", "status"],
+          "properties": {
+            "method": {"type": "string"},
+            "status": {"enum": ["done", "planned", "not_applicable_private"]}
+          }
+        }
+      }
+    },
+    "consent_and_governance": {
+      "type": "object",
+      "required": ["consent_instrument", "compensation", "ownership", "withdrawal_procedure", "access_control", "sensitive_content_policy"],
+      "properties": {
+        "consent_instrument": {"type": "string", "description": "reference to consent document; PLACEHOLDER invalid at pilot-ready level"},
+        "compensation": {"type": "string", "description": "compensation plan or explicit justification for absence"},
+        "ownership": {"type": "string"},
+        "withdrawal_procedure": {"type": "string"},
+        "access_control": {"type": "string", "description": "who can access what; tiers for sensitive strata"},
+        "sensitive_content_policy": {"type": "string"},
+        "community_veto": {"type": "boolean", "description": "whether community representatives can block publication of specific items"}
+      }
+    },
+    "task_definitions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["task_id", "construct_ref", "scenario", "scoring_method"],
+        "properties": {
+          "task_id": {"type": "string", "pattern": "^T-\\d+$"},
+          "construct_ref": {"type": "string", "pattern": "^SC-\\d+$"},
+          "task_type": {"enum": ["situated_scenario", "interactive", "mcq", "open_response", "judge_corpus", "abstention_probe", "other"]},
+          "scenario": {"type": "string"},
+          "context": {"type": "string"},
+          "input_template": {"type": "string"},
+          "expected_behavior": {"type": "array", "items": {"type": "string"}},
+          "acceptable_variation": {"type": "array", "items": {"type": "string"}},
+          "unacceptable_behavior": {"type": "array", "items": {"type": "string"}},
+          "cultural_dimensions": {"type": "array", "items": {"type": "string"}},
+          "ambiguity_notes": {"type": "string"},
+          "safety_concerns": {"type": "array", "items": {"type": "string"}},
+          "scoring_method": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {"enum": ["rubric", "exact_match", "llm_judge", "human_scored_set", "composite"]},
+              "rubric_ref": {"type": "string"},
+              "judge_validated": {"type": "boolean", "description": "required true when type == llm_judge"}
+            }
+          },
+          "adversarial_variants": {"type": "array", "items": {"type": "string"}},
+          "stratum_refs": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "annotation_protocol": {
+      "type": "object",
+      "required": ["layers", "rubrics", "disagreement_policy", "abstention_policy"],
+      "properties": {
+        "layers": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["layer", "recruitment", "rater_competence_types"],
+            "properties": {
+              "layer": {"enum": ["community", "expert", "llm_judge"]},
+              "recruitment": {"type": "string"},
+              "rater_competence_types": {
+                "type": "array",
+                "items": {"enum": ["community_member", "cultural_expert", "linguist", "domain_expert", "annotation_professional"]},
+                "minItems": 1
+              },
+              "blinding": {"type": "array", "items": {"type": "string"}},
+              "quality_control": {"type": "string"},
+              "interpretation_limits": {"type": "string"}
+            }
+          }
+        },
+        "rubrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["rubric_id", "dimensions"],
+            "properties": {
+              "rubric_id": {"type": "string", "pattern": "^R-\\d+$"},
+              "dimensions": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+              "rating_scale": {"type": "string"},
+              "free_response_prompts": {"type": "array", "items": {"type": "string"}},
+              "calibration": {"type": "string"}
+            }
+          }
+        },
+        "disagreement_policy": {
+          "type": "object",
+          "required": ["disagreement_is_signal", "aggregation_rule"],
+          "properties": {
+            "disagreement_is_signal": {"const": true},
+            "aggregation_rule": {"type": "string", "description": "must not collapse clusters without documented justification"},
+            "dissent_log": {"type": "boolean"},
+            "escalation_path": {"type": "string"}
+          }
+        },
+        "abstention_policy": {"type": "string"}
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["name", "formula_or_description", "captures", "hides"],
+        "properties": {
+          "name": {"type": "string"},
+          "formula_or_description": {"type": "string"},
+          "captures": {"type": "string"},
+          "hides": {"type": "string"},
+          "disaggregation": {"type": "array", "items": {"type": "string"}, "description": "required breakdowns: at minimum by stratum and language"}
+        }
+      }
+    },
+    "baselines": {
+      "type": "object",
+      "required": ["models", "expected_ordering_rationale"],
+      "properties": {
+        "models": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["name", "role"],
+            "properties": {
+              "name": {"type": "string"},
+              "role": {"type": "string", "description": "what this model tests (e.g. expected-strong regional multilingual)"},
+              "access": {"enum": ["open_weights", "api", "local"]}
+            }
+          }
+        },
+        "expected_ordering_rationale": {"type": "string"}
+      }
+    },
+    "reliability_plan": {
+      "type": "object",
+      "required": ["inter_rater", "test_retest", "prompt_sensitivity"],
+      "properties": {
+        "inter_rater": {"type": "string", "description": "metrics (ICC, Krippendorff) + thresholds + by layer/dimension"},
+        "test_retest": {"type": "string"},
+        "prompt_sensitivity": {"type": "string"},
+        "subgroup_stability": {"type": "string"}
+      }
+    },
+    "validity_plan": {
+      "type": "object",
+      "required": ["construct_validity", "content_validity", "claim_table"],
+      "properties": {
+        "construct_validity": {"type": "string"},
+        "content_validity": {"type": "string"},
+        "ecological_validity": {"type": "string"},
+        "convergent_discriminant": {"type": "string"},
+        "claim_table": {
+          "type": "array",
+          "minItems": 1,
+          "description": "every validity claim mapped to test + expected outcome + interpretation rule; untested claims labeled assumption",
+          "items": {
+            "type": "object",
+            "required": ["claim", "test", "status"],
+            "properties": {
+              "claim": {"type": "string"},
+              "test": {"type": "string"},
+              "expected_outcome": {"type": "string"},
+              "interpretation_rule": {"type": "string"},
+              "status": {"enum": ["tested", "planned", "assumption_waived"]}
+            }
+          }
+        }
+      }
+    },
+    "bias_audits": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["audit_id", "scope", "findings_or_plan"],
+        "properties": {
+          "audit_id": {"type": "string"},
+          "scope": {"type": "string"},
+          "findings_or_plan": {"type": "string"},
+          "residual_risks": {"type": "string"}
+        }
+      }
+    },
+    "privacy_risks": {"type": "array", "minItems": 0, "items": {"type": "string"}},
+    "leakage_risks": {
+      "type": "object",
+      "required": ["screening_method", "gaming_defenses"],
+      "properties": {
+        "screening_method": {"type": "string"},
+        "gaming_defenses": {"type": "array", "items": {"type": "string"}},
+        "private_holdout": {"type": "boolean", "description": "whether a private holdout exists for leaderboard integrity"}
+      }
+    },
+    "known_limitations": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "version_history": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["version", "date", "changes"],
+        "properties": {
+          "version": {"type": "string"},
+          "date": {"type": "string", "format": "date"},
+          "changes": {"type": "string"},
+          "change_log": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "community_review_status": {
+      "type": "object",
+      "required": ["status", "reviewers_role_summary"],
+      "properties": {
+        "status": {"enum": ["not_started", "consultation_open", "review_in_progress", "approved", "approved_with_conditions", "rejected"]},
+        "reviewers_role_summary": {"type": "string", "description": "roles of reviewers, never identifying individuals without consent"},
+        "conditions": {"type": "array", "items": {"type": "string"}},
+        "dissent_on_record": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "sources_manifest": {
+      "type": "array",
+      "description": "literature and evidence manifest; every motivating_theory source_id must resolve here",
+      "items": {
+        "type": "object",
+        "required": ["source_id", "citation", "passage"],
+        "properties": {
+          "source_id": {"type": "string", "pattern": "^SRC-\\d+$"},
+          "citation": {"type": "string"},
+          "passage": {"type": "string"},
+          "verified": {"type": "boolean"}
+        }
+      }
+    },
+    "pilot": {
+      "type": "object",
+      "properties": {
+        "status": {"enum": ["not_run", "running", "complete"]},
+        "go_no_go_results": {"type": "string"},
+        "revision_history": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}
