@@ -25,6 +25,10 @@ auth.db
 .DS_Store
 Thumbs.db
 
+# Admin scripts (no en repo público - contienen lógica de seed)
+scripts/seed_users.py
+scripts/create_user.py
+
 # Benchmark data (large files)
 /eval-suite/runs/
 /eval-suite/history.jsonl

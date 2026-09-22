@@ -13,8 +13,8 @@ import auth
 # --- Config ---
 DATA_DIR = "/mnt/shared/conicet-data"
 LIBRARY_DIR = "/mnt/shared/pidtt-aec/libraries"
-LLM_URL = "http://192.168.1.68:8005/v1/chat/completions"
-LLM_MODEL = "citecca-agent"
+LLM_URL = os.environ.get("LLM_URL", "http://192.168.1.68:8005/v1/chat/completions")
+LLM_MODEL = os.environ.get("LLM_MODEL", "citecca-agent")
 HOST = "0.0.0.0"
 PORT = 8900
 PER_PAGE = 20
@@ -903,11 +903,7 @@ def _qa_worker(job_id, body):
 
 def main():
     auth.init_db()
-    # Seed default users
-    for un, dn in [("mdenham", "Mónica Denham"), ("mbasti", "Marian Basti")]:
-        if not auth.get_user(un):
-            auth.create_user(un, "anasa1463", dn)
-            print("[auth] created user {}".format(un), flush=True)
+    # NOTA: el seed de usuarios se hace desde scripts/seed_users.py (no en el repo)
 
     # Preload metadata in background
     threading.Thread(target=_load_metadata, daemon=True).start()

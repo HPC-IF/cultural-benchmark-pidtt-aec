@@ -6,8 +6,8 @@ import urllib.request
 # --- Config ---
 AUTH_DB = "/mnt/shared/pidtt-aec/auth.db"
 DATA_DIR = "/mnt/shared/conicet-data"
-LLM_URL = "http://192.168.1.68:8005/v1/chat/completions"
-LLM_MODEL = "citecca-agent"
+LLM_URL = os.environ.get("LLM_URL", "http://192.168.1.68:8005/v1/chat/completions")
+LLM_MODEL = os.environ.get("LLM_MODEL", "citecca-agent")
 HOST = "0.0.0.0"
 PORT = 8900
 TOKEN_TTL = 86400 * 7
