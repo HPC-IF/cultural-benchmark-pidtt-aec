@@ -1708,6 +1708,11 @@ function App() {
                                 ) : (
                                   <p>{item.question}</p>
                                 )}
+                                <QARating
+                                  value={ratings[hashKey(item.question)]?.q || [0, 0, 0, 0]}
+                                  onChange={(v) => setRating(item, v, ratings[hashKey(item.question)]?.a || [0, 0, 0, 0])}
+                                  dimensions={QUESTION_DIMS}
+                                />
                                 {regeneratingQuestion === item.n && (
                                   <div className="regenerate-panel">
                                     <p className="regenerate-hint">
@@ -1816,11 +1821,6 @@ function App() {
                                     </button>
                                   </div>
                                 )}
-                                <QARating
-                                  value={ratings[hashKey(item.question)]?.q || [0, 0, 0, 0]}
-                                  onChange={(v) => setRating(item, v, ratings[hashKey(item.question)]?.a || [0, 0, 0, 0])}
-                                  dimensions={QUESTION_DIMS}
-                                />
                                 <QARating
                                   value={ratings[hashKey(item.question)]?.a || [0, 0, 0, 0]}
                                   onChange={(v) => setRating(item, ratings[hashKey(item.question)]?.q || [0, 0, 0, 0], v)}
