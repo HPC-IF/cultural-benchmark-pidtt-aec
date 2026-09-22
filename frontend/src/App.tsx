@@ -401,6 +401,127 @@ function App() {
   // Preview inline (sidebar)
   const [previewId, setPreviewId] = useState<string | null>(null);
 
+  // Edición inline de preguntas/respuestas
+  const [editingQuestion, setEditingQuestion] = useState<number | null>(null);
+  const [editingAnswer, setEditingAnswer] = useState<number | null>(null);
+  const [regeneratingQuestion, setRegeneratingQuestion] = useState<number | null>(null);
+  const [regeneratingAnswer, setRegeneratingAnswer] = useState<number | null>(null);
+  const [regeneratePrompt, setRegeneratePrompt] = useState<Record<number, string>>({});
+  const [regeneratingLoading, setRegeneratingLoading] = useState<number | null>(null);
+
+  // Regenerar pregunta individual (llama al backend que reenvía al LLM)
+  const regenerateQuestion = async (n: number, instruction: string) => {
+    if (!qa) return;
+    const item = qa.qa.find(q => q.n === n);
+    if (!item) return;
+    setRegeneratingLoading(n);
+    try {
+      const r = await apiFetch('/regenerate-item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          n,
+          type: 'question',
+          instruction,
+          original: item.question,
+          axis: item.cultural_axis,
+        }),
+      });
+      const d = await r.json();
+      if (r.ok && d.data?.question) {
+        setQa(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            qa: prev.qa.map(q => q.n === n ? { ...q, question: d.data.question } : q),
+          };
+        });
+      }
+    } catch (e) {
+      console.error('Regenerate question error:', e);
+    } finally {
+      setRegeneratingLoading(null);
+      setRegeneratingQuestion(null);
+    }
+  };
+
+  // Regenerar respuesta individual (llama al backend que reenvía al LLM)
+  const regenerateAnswer = async (n: number, instruction: string) => {
+    if (!qa) return;
+    const item = qa.qa.find(q => q.n === n);
+    if (!item) return;
+    setRegeneratingLoading(n);
+    try {
+      const r = await apiFetch('/regenerate-item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          n,
+          type: 'answer',
+          instruction,
+          original_question: item.question,
+          original: item.answer || item.options?.join(' | ') || '',
+          axis: item.cultural_axis,
+        }),
+      });
+      const d = await r.json();
+      if (r.ok && d.data) {
+        setQa(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            qa: prev.qa.map(q => {
+              if (q.n !== n) return q;
+              const updated = { ...q };
+              if (d.data.answer !== undefined) updated.answer = d.data.answer;
+              if (d.data.options !== undefined) updated.options = d.data.options;
+              if (d.data.correct !== undefined) updated.correct = d.data.correct;
+              if (d.data.scenario !== undefined) updated.scenario = d.data.scenario;
+              return updated;
+            }),
+          };
+        });
+      }
+    } catch (e) {
+      console.error('Regenerate answer error:', e);
+    } finally {
+      setRegeneratingLoading(null);
+      setRegeneratingAnswer(null);
+    }
+  };
+
+  // Guardar pregunta editada
+  const saveQuestion = (n: number) => {
+    setEditingQuestion(null);
+  };
+
+  // Guardar respuesta editada
+  const saveAnswer = (n: number) => {
+    setEditingAnswer(null);
+  };
+
+  // Actualizar pregunta en estado local
+  const updateQuestion = (n: number, text: string) => {
+    setQa(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        qa: prev.qa.map(q => q.n === n ? { ...q, question: text } : q),
+      };
+    });
+  };
+
+  // Actualizar respuesta en estado local
+  const updateAnswer = (n: number, text: string) => {
+    setQa(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        qa: prev.qa.map(q => q.n === n ? { ...q, answer: text } : q),
+      };
+    });
+  };
+
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -1440,20 +1561,134 @@ function App() {
                           return (
                             <div className="chat-turn" key={item.n}>
                               <div className={`chat-bubble question${flags.length ? ' flagged' : ''}`}>
-                                <span className="bubble-label">
-                                  P{item.n}
-                                  {item.cultural_axis && (
-                                    <span className={`qa-axis-badge ${AXIS_CLASS[item.cultural_axis] || ''}`}>
-                                      {AXIS_LABEL[item.cultural_axis] || item.cultural_axis}
-                                    </span>
-                                  )}
-                                  <span className="qa-type-badge">{itemType}</span>
-                                </span>
-                                <p>{item.question}</p>
+                                <div className="bubble-header">
+                                  <span className="bubble-label">
+                                    P{item.n}
+                                    {item.cultural_axis && (
+                                      <span className={`qa-axis-badge ${AXIS_CLASS[item.cultural_axis] || ''}`}>
+                                        {AXIS_LABEL[item.cultural_axis] || item.cultural_axis}
+                                      </span>
+                                    )}
+                                    <span className="qa-type-badge">{itemType}</span>
+                                  </span>
+                                  <div className="bubble-actions">
+                                    <button
+                                      type="button"
+                                      className="bubble-btn edit"
+                                      onClick={() => setEditingQuestion(editingQuestion === item.n ? null : item.n)}
+                                      title="Editar pregunta"
+                                    >
+                                      ✏️
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="bubble-btn regenerate"
+                                      onClick={() => setRegeneratingQuestion(regeneratingQuestion === item.n ? null : item.n)}
+                                      title="Regenerar pregunta"
+                                    >
+                                      🔄
+                                    </button>
+                                  </div>
+                                </div>
+                                {editingQuestion === item.n ? (
+                                  <div className="bubble-edit">
+                                    <textarea
+                                      className="bubble-edit-input"
+                                      value={item.question}
+                                      onChange={(e) => updateQuestion(item.n, e.target.value)}
+                                      rows={3}
+                                    />
+                                    <div className="bubble-edit-actions">
+                                      <button
+                                        type="button"
+                                        className="bubble-edit-save"
+                                        onClick={() => saveQuestion(item.n)}
+                                      >
+                                        Guardar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="bubble-edit-cancel"
+                                        onClick={() => setEditingQuestion(null)}
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <p>{item.question}</p>
+                                )}
+                                {regeneratingQuestion === item.n && (
+                                  <div className="regenerate-panel">
+                                    <p className="regenerate-hint">
+                                      Instrucciones para regenerar esta pregunta (opcional):
+                                    </p>
+                                    <textarea
+                                      className="regenerate-input"
+                                      placeholder="Ej: Enfocarme más en la adaptación cultural, evitar mencionar museos, usar un escenario de gestión de emergencias…"
+                                      rows={3}
+                                      value={regeneratePrompt[item.n] || ''}
+                                      onChange={(e) => setRegeneratePrompt(prev => ({ ...prev, [item.n]: e.target.value }))}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="regenerate-btn"
+                                      onClick={() => regenerateQuestion(item.n, regeneratePrompt[item.n] || '')}
+                                      disabled={regeneratingLoading === item.n}
+                                    >
+                                      {regeneratingLoading === item.n ? 'Regenerando…' : 'Regenerar pregunta'}
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                               <div className="chat-bubble answer">
-                                <span className="bubble-label answer-label">R{item.n}</span>
-                                {item.options ? (
+                                <div className="bubble-header">
+                                  <span className="bubble-label answer-label">R{item.n}</span>
+                                  <div className="bubble-actions">
+                                    <button
+                                      type="button"
+                                      className="bubble-btn edit"
+                                      onClick={() => setEditingAnswer(editingAnswer === item.n ? null : item.n)}
+                                      title="Editar respuesta"
+                                    >
+                                      ✏️
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="bubble-btn regenerate"
+                                      onClick={() => setRegeneratingAnswer(regeneratingAnswer === item.n ? null : item.n)}
+                                      title="Regenerar respuesta"
+                                    >
+                                      🔄
+                                    </button>
+                                  </div>
+                                </div>
+                                {editingAnswer === item.n ? (
+                                  <div className="bubble-edit">
+                                    <textarea
+                                      className="bubble-edit-input"
+                                      value={item.answer || ''}
+                                      onChange={(e) => updateAnswer(item.n, e.target.value)}
+                                      rows={4}
+                                    />
+                                    <div className="bubble-edit-actions">
+                                      <button
+                                        type="button"
+                                        className="bubble-edit-save"
+                                        onClick={() => saveAnswer(item.n)}
+                                      >
+                                        Guardar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="bubble-edit-cancel"
+                                        onClick={() => setEditingAnswer(null)}
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : item.options ? (
                                   <div className="qa-mcq">
                                     {item.options.map((opt: string, i: number) => (
                                       <div key={i} className={`qa-mcq-option${opt.startsWith(item.correct) ? ' correct' : ''}`}>
@@ -1468,6 +1703,28 @@ function App() {
                                   </div>
                                 ) : (
                                   <p>{item.answer}</p>
+                                )}
+                                {regeneratingAnswer === item.n && (
+                                  <div className="regenerate-panel">
+                                    <p className="regenerate-hint">
+                                      Instrucciones para regenerar esta respuesta (opcional):
+                                    </p>
+                                    <textarea
+                                      className="regenerate-input"
+                                      placeholder="Ej: Hacerla más específica, usar un ejemplo concreto del paper, evitar generalidades…"
+                                      rows={3}
+                                      value={regeneratePrompt[`a${item.n}`] || ''}
+                                      onChange={(e) => setRegeneratePrompt(prev => ({ ...prev, [`a${item.n}`]: e.target.value }))}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="regenerate-btn"
+                                      onClick={() => regenerateAnswer(item.n, regeneratePrompt[`a${item.n}`] || '')}
+                                      disabled={regeneratingLoading === item.n}
+                                    >
+                                      {regeneratingLoading === item.n ? 'Regenerando…' : 'Regenerar respuesta'}
+                                    </button>
+                                  </div>
                                 )}
                                 <QARating
                                   value={ratings[hashKey(item.question)] || 0}

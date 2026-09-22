@@ -2659,6 +2659,182 @@ body {
   cursor: not-allowed;
 }
 
+/* ========================================
+   Bubble header (label + action buttons)
+   ======================================== */
+.bubble-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.bubble-header .bubble-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.bubble-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.bubble-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.35rem;
+  line-height: 1;
+  transition: all 0.15s;
+  opacity: 0.6;
+}
+
+.bubble-btn:hover {
+  opacity: 1;
+  background: var(--surface-hover);
+  border-color: var(--line);
+}
+
+.bubble-btn.edit:hover {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+
+.bubble-btn.regenerate:hover {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
+/* ========================================
+   Bubble edit (inline textarea + save/cancel)
+   ======================================== */
+.bubble-edit {
+  margin: 0.5rem 0;
+}
+
+.bubble-edit-input {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1.5px solid var(--brand);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.bubble-edit-input:focus {
+  box-shadow: 0 0 0 3px rgba(11, 94, 84, 0.12);
+}
+
+.bubble-edit-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.bubble-edit-save,
+.bubble-edit-cancel {
+  padding: 0.35rem 0.8rem;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1px solid var(--line-strong);
+}
+
+.bubble-edit-save {
+  background: var(--brand);
+  color: #fff;
+  border-color: var(--brand);
+}
+
+.bubble-edit-save:hover {
+  background: var(--brand-deep);
+}
+
+.bubble-edit-cancel {
+  background: var(--card);
+  color: var(--ink-soft);
+}
+
+.bubble-edit-cancel:hover {
+  background: var(--surface-hover);
+}
+
+/* ========================================
+   Regenerate panel
+   ======================================== */
+.regenerate-panel {
+  margin: 0.6rem 0;
+  padding: 0.7rem 0.85rem;
+  background: var(--gold-soft);
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  animation: fadeIn 0.2s ease;
+}
+
+.regenerate-hint {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--gold);
+}
+
+.regenerate-input {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.regenerate-input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(176, 125, 43, 0.1);
+}
+
+.regenerate-btn {
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1px solid var(--gold);
+  background: var(--gold);
+  color: #fff;
+}
+
+.regenerate-btn:hover:not(:disabled) {
+  background: #9a6d24;
+  border-color: #9a6d24;
+}
+
+.regenerate-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .sources-controls {
   flex-wrap: wrap;
 }

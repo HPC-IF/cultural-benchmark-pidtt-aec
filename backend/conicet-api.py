@@ -231,6 +231,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_related_post()
             if u.path == "/library":
                 return self._handle_library_post(username)
+            if u.path == "/regenerate-item":
+                return self._handle_regenerate_item(username)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
@@ -394,6 +396,93 @@ class Handler(BaseHTTPRequestHandler):
             _save_library(username, list(current_set))
             new_ids = _load_library(username)
         return self._json({"ids": new_ids, "total": len(new_ids)})
+
+    def _handle_regenerate_item(self, username):
+        """POST /regenerate-item — regenera una pregunta o respuesta individual.
+        Body: {n: int, type: "question"|"answer", instruction: str}
+        """
+        clen = int(self.headers.get("Content-Length") or 0)
+        if clen <= 0 or clen > 50000:
+            return self._json({"error": "body invalido"}, 400)
+        body = json.loads(self.rfile.read(clen).decode())
+        n = body.get("n")
+        item_type = body.get("type", "question")
+        instruction = body.get("instruction", "")
+
+        if not n or item_type not in ("question", "answer"):
+            return self._json({"error": "n requerido y tipo debe ser question|answer"}, 400)
+
+        # Get library IDs to find the source articles
+        with _library_lock:
+            lib_ids = _load_library(username)
+        meta_map = {d["id"]: d for d in _load_metadata()}
+        articles = []
+        for i in lib_ids:
+            m = meta_map.get(i)
+            if m:
+                articles.append({
+                    "id": m["id"],
+                    "title": m.get("title", ""),
+                    "description": m.get("description", ""),
+                })
+
+        # Build prompt for regeneration
+        prompt_parts = []
+        prompt_parts.append("Eres riguroso. No inventas. Devuelve SOLO JSON válido.")
+        prompt_parts.append("")
+        if item_type == "question":
+            prompt_parts.append("Regenerá la siguiente pregunta aplicando esta instrucción del usuario:")
+            prompt_parts.append(f"Instrucción: {instruction or 'Mejorarla manteniendo el eje cultural.'}")
+            prompt_parts.append("")
+            prompt_parts.append(f"Pregunta original: {body.get('original', '')}")
+            prompt_parts.append(f"Eje cultural: {body.get('axis', 'escenario')}")
+            prompt_parts.append("")
+            prompt_parts.append("PAPERS FUENTE:")
+            for a in articles[:5]:
+                desc = (a.get("description") or "")[:200]
+                prompt_parts.append(f"- {a['title']} ({a['id']}): {desc}")
+            prompt_parts.append("")
+            prompt_parts.append("Respondé SOLO con JSON válido: {\"question\": \"...\"}")
+        else:
+            prompt_parts.append("Regenerá la siguiente respuesta aplicando esta instrucción del usuario:")
+            prompt_parts.append(f"Instrucción: {instruction or 'Mejorarla manteniendo el eje cultural y el formato.'}")
+            prompt_parts.append("")
+            prompt_parts.append(f"Pregunta: {body.get('original_question', '')}")
+            prompt_parts.append(f"Respuesta original: {body.get('original', '')}")
+            prompt_parts.append(f"Eje cultural: {body.get('axis', 'escenario')}")
+            prompt_parts.append("")
+            prompt_parts.append("PAPERS FUENTE:")
+            for a in articles[:5]:
+                desc = (a.get("description") or "")[:200]
+                prompt_parts.append(f"- {a['title']} ({a['id']}): {desc}")
+            prompt_parts.append("")
+            prompt_parts.append("Respondé SOLO con JSON válido: {\"answer\": \"...\"} o {\"options\": [...], \"correct\": \"B\"}")
+
+        prompt = "\n".join(prompt_parts)
+
+        try:
+            payload = {
+                "model": LLM_MODEL,
+                "messages": [
+                    {"role": "system", "content": "Eres riguroso. No inventas. Devuelve SOLO JSON valido."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 1500,
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+            req = urllib.request.Request(LLM_URL, data=json.dumps(payload).encode("utf-8"),
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=120) as r:
+                llm = json.loads(r.read())
+            content = llm["choices"][0]["message"]["content"]
+            m = re.search(r"\{.*\}", content, re.DOTALL)
+            if m:
+                parsed = json.loads(m.group(0))
+                return self._json({"ok": True, "data": parsed})
+            return self._json({"error": "no se pudo parsear la respuesta del modelo"}, 500)
+        except Exception as e:
+            return self._json({"error": str(e)}, 500)
 
     def _handle_related_post(self):
         clen = int(self.headers.get("Content-Length") or 0)
