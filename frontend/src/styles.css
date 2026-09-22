@@ -2497,6 +2497,7 @@ body {
   cursor: pointer;
   transition: all 0.15s;
   font-size: 0.75rem;
+  position: relative;
 }
 
 .qa-axis-chip:hover {
@@ -2522,6 +2523,31 @@ body {
 .qa-axis-label {
   font-weight: 600;
   color: var(--ink-soft);
+}
+
+/* Tooltip nativo mejorado via CSS */
+.qa-axis-chip[title]:hover::after {
+  content: attr(title);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  white-space: nowrap;
+  max-width: 280px;
+  white-space: normal;
+  width: max-content;
+  max-width: 260px;
+  text-align: center;
+  line-height: 1.4;
+  z-index: 50;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 
 /* ========================================

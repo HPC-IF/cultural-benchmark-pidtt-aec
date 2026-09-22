@@ -626,6 +626,14 @@ function App() {
     { id: 'razonamiento', label: 'Razonamiento', color: '#5cb85c' },
     { id: 'valores', label: 'Valores', color: '#e83e8c' },
   ];
+  const qaAxisHints: Record<string, string> = {
+    escenario: 'Pregunta basada en una situación concreta (museo, aula, debate) que el evaluado debe resolver.',
+    critica: 'Pregunta que pide analizar limitaciones, sesgos o contradicciones de un planteo cultural.',
+    adaptacion: 'Pregunta sobre cómo adaptar una práctica o mensaje a un contexto cultural distinto.',
+    dato: 'Pregunta que evalúa conocimiento específico sobre un hecho o práctica cultural.',
+    razonamiento: 'Pregunta que requiere inferir, comparar o argumentar sobre dinámicas culturales.',
+    valores: 'Pregunta que explora tensiones entre valores culturales o éticos en un escenario.',
+  };
   const qaTypeOptions = [
     { id: 'open-ended', label: 'Open-ended', icon: '✏️' },
     { id: 'mcq', label: 'MCQ', icon: '☑️' },
@@ -1470,7 +1478,7 @@ function App() {
                       <span className="qa-config-label">Ejes cognitivos</span>
                       <div className="qa-axes-grid">
                         {qaAxesOptions.map(ax => (
-                          <label key={ax.id} className={`qa-axis-chip${qaAxes.has(ax.id) ? ' active' : ''}`} style={{ '--ax-color': ax.color } as React.CSSProperties} onClick={() => toggleQaAxis(ax.id)}>
+                          <label key={ax.id} className={`qa-axis-chip${qaAxes.has(ax.id) ? ' active' : ''}`} style={{ '--ax-color': ax.color } as React.CSSProperties} onClick={() => toggleQaAxis(ax.id)} title={qaAxisHints[ax.id]}>
                             <span className="qa-axis-dot" style={{ backgroundColor: ax.color }}></span>
                             <span className="qa-axis-label">{ax.label}</span>
                           </label>
