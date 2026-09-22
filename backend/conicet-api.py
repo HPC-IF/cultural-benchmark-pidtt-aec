@@ -233,6 +233,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_library_post(username)
             if u.path == "/regenerate-item":
                 return self._handle_regenerate_item(username)
+            if u.path == "/chat":
+                return self._handle_chat(username)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
@@ -484,6 +486,37 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._json({"error": str(e)}, 500)
 
+    def _handle_chat(self, username):
+        """POST /chat — chat directo con el LLM, sin system prompt.
+        Body: {message: str} → {reply: str}
+        """
+        clen = int(self.headers.get("Content-Length") or 0)
+        if clen <= 0 or clen > 50000:
+            return self._json({"error": "body invalido"}, 400)
+        body = json.loads(self.rfile.read(clen).decode())
+        message = body.get("message", "").strip()
+        if not message:
+            return self._json({"error": "message requerido"}, 400)
+
+        try:
+            payload = {
+                "model": LLM_MODEL,
+                "messages": [
+                    {"role": "user", "content": message}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 2000,
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+            req = urllib.request.Request(LLM_URL, data=json.dumps(payload).encode("utf-8"),
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=120) as r:
+                llm = json.loads(r.read())
+            reply = llm["choices"][0]["message"]["content"]
+            return self._json({"reply": reply})
+        except Exception as e:
+            return self._json({"error": str(e)}, 500)
+
     def _handle_related_post(self):
         clen = int(self.headers.get("Content-Length") or 0)
         if clen <= 0 or clen > 50000:
@@ -603,6 +636,16 @@ def _qa_worker(job_id, body):
                     "date": m.get("date", ""),
                     "description": m.get("description", ""),
                     "subjects": m.get("subjects", []),
+                })
+            else:
+                # Paper no encontrado en metadata — usar placeholder con ID
+                articles.append({
+                    "id": i,
+                    "title": f"Paper {i}",
+                    "creators": "",
+                    "date": "",
+                    "description": f"ID: {i}. Paper no encontrado en el metadata local.",
+                    "subjects": [],
                 })
 
         with QAJOBS_lock:

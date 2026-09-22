@@ -178,13 +178,34 @@ function setAuth(user: AuthUser) {
   } catch { /* ignore */ }
 }
 const PER_PAGE = 20;
-const RATINGS_KEY = 'pidtt-aec-qa-ratings';
+const RATINGS_KEY = 'pidtt-aec-qa-ratings-v2';
 
-// Etiqueta descriptiva de cada puntuacion (1 = muy mala, 10 = muy buena).
-const RATING_LABELS: Record<number, string> = {
-  1: 'muy mala', 2: 'muy mala', 3: 'mala', 4: 'mala', 5: 'regular',
-  6: 'regular', 7: 'buena', 8: 'buena', 9: 'muy buena', 10: 'muy buena',
-};
+// Dimensiones de puntuación matizadas
+const QUESTION_DIMS = [
+  { id: 'claridad', label: 'Claridad', hint: '¿La pregunta es fácil de entender?' },
+  { id: 'especificidad', label: 'Especificidad', hint: '¿Está bien anclada en el eje cultural?' },
+  { id: 'originalidad', label: 'Originalidad', hint: '¿Es un escenario novedoso o repetido?' },
+  { id: 'utilidad', label: 'Utilidad', hint: '¿Sirve para evaluar competencia cultural?' },
+] as const;
+
+const ANSWER_DIMS = [
+  { id: 'fidelidad', label: 'Fidelidad', hint: '¿Refleja el contenido del paper?' },
+  { id: 'completitud', label: 'Completitud', hint: '¿Cubre los puntos clave?' },
+  { id: 'precision', label: 'Precisión cultural', hint: '¿Evita estereotipos y generalizaciones?' },
+  { id: 'utilidad', label: 'Utilidad', hint: '¿Sirve como referencia para evaluar?' },
+] as const;
+
+type RatingDims = readonly number[];
+
+interface RatingEntry {
+  q: RatingDims; // pregunta: [claridad, especificidad, originalidad, utilidad]
+  a: RatingDims; // respuesta: [fidelidad, completitud, precision, utilidad]
+}
+
+const emptyRating = (): RatingEntry => ({
+  q: [0, 0, 0, 0],
+  a: [0, 0, 0, 0],
+});
 
 // Clave estable por P&R: hash de la pregunta (djb2). Si un P&R se regenera
 // con la misma pregunta, su puntuacion anterior se conserva.
@@ -194,31 +215,53 @@ function hashKey(s: string): string {
   return 'q' + h.toString(16);
 }
 
-function QARating({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  const [hover, setHover] = useState(0);
-  const shown = hover || value;
+// Etiqueta descriptiva de cada puntuacion (1-7, matizado)
+const RATING_LABELS: Record<number, string> = {
+  0: 'sin puntuar',
+  1: 'muy malo',
+  2: 'malo',
+  3: 'por debajo',
+  4: 'regular',
+  5: 'bueno',
+  6: 'muy bueno',
+  7: 'excelente',
+};
+
+function QARating({ value, onChange, dimensions }: { value: number[]; onChange: (v: number[]) => void; dimensions: readonly { id: string; label: string; hint: string }[] }) {
   return (
-    <div className="qa-rating" onMouseLeave={() => setHover(0)}>
+    <div className="qa-rating">
       <span className="qa-rating-label">Tu puntuación:</span>
-      <div className="qa-rating-pips" role="radiogroup" aria-label="Puntuar de 1 a 10">
-        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) => (
-          <button
-            key={v}
-            type="button"
-            role="radio"
-            aria-checked={value === v}
-            aria-label={`${v} — ${RATING_LABELS[v]}`}
-            title={`${v} — ${RATING_LABELS[v]}`}
-            className={`pip${v <= shown ? ' on' : ''}${v === value ? ' sel' : ''}`}
-            onClick={() => onChange(v === value ? 0 : v)}
-            onMouseEnter={() => setHover(v)}
-          >
-            {v}
-          </button>
+      <div className="qa-rating-pips" role="radiogroup" aria-label="Puntuar de 1 a 7">
+        {dimensions.map((dim, dimIdx) => (
+          <div key={dim.id} className="qa-rating-dim">
+            <span className="qa-rating-dim-label" title={dim.hint}>
+              {dim.label}
+            </span>
+            <div className="qa-rating-pips-row">
+              {[1, 2, 3, 4, 5, 6, 7].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  role="radio"
+                  aria-checked={value[dimIdx] === p}
+                  aria-label={`${p} — ${RATING_LABELS[p]}`}
+                  title={`${dim.label}: ${p} — ${RATING_LABELS[p]}`}
+                  className={`pip${p <= (value[dimIdx] || 0) ? ' on' : ''}${value[dimIdx] === p ? ' sel' : ''}`}
+                  onClick={() => {
+                    const next = [...value];
+                    next[dimIdx] = p;
+                    onChange(next);
+                  }}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
-      <span className={`qa-rating-current${value ? '' : ' muted'}`}>
-        {value ? `${value}/10 · ${RATING_LABELS[value]}` : 'sin puntuar'}
+      <span className={`qa-rating-current${value.some(v => v > 0) ? '' : ' muted'}`}>
+        {value.some(v => v > 0) ? dimensions.map((d, i) => `${d.label}: ${RATING_LABELS[value[i]] || '—'}`).join(' · ') : 'sin puntuar'}
       </span>
     </div>
   );
@@ -391,8 +434,38 @@ function App() {
   const [library, setLibrary] = useState<string[]>([]);
   const [libraryOnly, setLibraryOnly] = useState(false);
 
-  // Tabs: "fuentes" | "generacion"
-  const [activeTab, setActiveTab] = useState<'fuentes' | 'generacion'>('fuentes');
+  // Tabs: "fuentes" | "generacion" | "chat"
+  const [activeTab, setActiveTab] = useState<'fuentes' | 'generacion' | 'chat'>('fuentes');
+
+  // Chat state
+  const [chatMessages, setChatMessages] = useState<{role: 'user' | 'assistant'; content: string}[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+
+  const sendChat = async () => {
+    const text = chatInput.trim();
+    if (!text || chatLoading) return;
+    setChatInput('');
+    setChatLoading(true);
+    setChatMessages(prev => [...prev, { role: 'user', content: text }]);
+    try {
+      const r = await apiFetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      });
+      const d = await r.json();
+      if (r.ok && d.reply) {
+        setChatMessages(prev => [...prev, { role: 'assistant', content: d.reply }]);
+      } else {
+        setChatMessages(prev => [...prev, { role: 'assistant', content: d.error || 'Error del modelo' }]);
+      }
+    } catch (e) {
+      setChatMessages(prev => [...prev, { role: 'assistant', content: e instanceof Error ? e.message : 'Error de conexión' }]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
 
   // Filtros de QAs por eje/tipo
   const [qaFilterAxes, setQaFilterAxes] = useState<Set<string>>(new Set());
@@ -616,20 +689,19 @@ function App() {
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [relatedError, setRelatedError] = useState<string | null>(null);
 
-  // Puntuacion 1-10 por P&R (1 = muy mala, 10 = muy buena). Persistido en
-  // localStorage con clave = hash de la pregunta, asi sobrevive recargas y
-  // conservaciones de un mismo P&R regenerado.
-  const [ratings, setRatings] = useState<Record<string, number>>(() => {
+  // Puntuaciones por P&R: { [hash]: { q: [4 dims], a: [4 dims] } }
+  const [ratings, setRatings] = useState<Record<string, RatingEntry>>(() => {
     try {
       return JSON.parse(localStorage.getItem(RATINGS_KEY) || '{}');
     } catch {
       return {};
     }
   });
-  const setRating = (item: QA, v: number) => {
+
+  const setRating = (item: QA, qDims: number[], aDims: number[]) => {
+    const key = hashKey(item.question);
     setRatings((prev) => {
-      const next = { ...prev, [hashKey(item.question)]: v };
-      if (v === 0) delete next[hashKey(item.question)];
+      const next = { ...prev, [key]: { q: qDims, a: aDims } };
       try { localStorage.setItem(RATINGS_KEY, JSON.stringify(next)); } catch { /* full/private mode */ }
       return next;
     });
@@ -965,6 +1037,16 @@ function App() {
           >
             <span className="tab-icon">✏️</span>
             <span>Generación</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'chat'}
+            className={`tab-btn${activeTab === 'chat' ? ' active' : ''}`}
+            onClick={() => setActiveTab('chat')}
+          >
+            <span className="tab-icon">💬</span>
+            <span>Chat</span>
           </button>
         </div>
 
@@ -1727,10 +1809,16 @@ function App() {
                                   </div>
                                 )}
                                 <QARating
-                                  value={ratings[hashKey(item.question)] || 0}
-                                  onChange={(v) => setRating(item, v)}
+                                  value={ratings[hashKey(item.question)]?.q || [0, 0, 0, 0]}
+                                  onChange={(v) => setRating(item, v, ratings[hashKey(item.question)]?.a || [0, 0, 0, 0])}
+                                  dimensions={QUESTION_DIMS}
                                 />
-                                {ratings[hashKey(item.question)] > 0 && (
+                                <QARating
+                                  value={ratings[hashKey(item.question)]?.a || [0, 0, 0, 0]}
+                                  onChange={(v) => setRating(item, ratings[hashKey(item.question)]?.q || [0, 0, 0, 0], v)}
+                                  dimensions={ANSWER_DIMS}
+                                />
+                                {(ratings[hashKey(item.question)]?.q?.some(v => v > 0) || ratings[hashKey(item.question)]?.a?.some(v => v > 0)) && (
                                   <textarea
                                     className="qa-notes"
                                     placeholder="Agregar una nota…"
@@ -1887,6 +1975,57 @@ function App() {
                     )}
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Tab Chat ── */}
+        {activeTab === 'chat' && (
+          <div className="tab-panel">
+            <div className="chat-panel">
+              <div className="chat-messages">
+                {chatMessages.length === 0 && (
+                  <div className="chat-empty">
+                    <p>Chat directo con el modelo. Sin system prompt, sin contexto de papers.</p>
+                  </div>
+                )}
+                {chatMessages.map((msg, i) => (
+                  <div key={i} className={`chat-msg ${msg.role}`}>
+                    <span className="chat-msg-label">{msg.role === 'user' ? 'Vos' : 'Modelo'}</span>
+                    <p>{msg.content}</p>
+                  </div>
+                ))}
+                {chatLoading && (
+                  <div className="chat-msg assistant">
+                    <span className="chat-msg-label">Modelo</span>
+                    <p className="chat-loading-dot">…</p>
+                  </div>
+                )}
+              </div>
+              <div className="chat-input-row">
+                <textarea
+                  className="chat-input"
+                  placeholder="Escribí tu mensaje…"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      sendChat();
+                    }
+                  }}
+                  rows={2}
+                  disabled={chatLoading}
+                />
+                <button
+                  type="button"
+                  className="chat-send-btn"
+                  onClick={sendChat}
+                  disabled={chatLoading || !chatInput.trim()}
+                >
+                  {chatLoading ? '…' : 'Enviar'}
+                </button>
               </div>
             </div>
           </div>
