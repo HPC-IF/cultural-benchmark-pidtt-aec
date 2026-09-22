@@ -521,16 +521,17 @@ def _qa_worker(job_id, body):
             QAJOBS[job_id]["detail"] = "Generando preguntas para {} artículos...".format(len(articles))
             QAJOBS[job_id]["pct"] = 10
 
-        # Build prompt — v16: format-aware, strict
+        # Build prompt — v17: context-aware, paper-grounded scenarios
         prompt_parts = []
         prompt_parts.append("Creá 5 preguntas de benchmark cultural.")
         prompt_parts.append("")
         prompt_parts.append(f"TIPO SOLICITADO: {', '.join(requested_qa_types)}")
         prompt_parts.append("")
         prompt_parts.append("REGLAS:")
-        prompt_parts.append("1. Pregunta = ESCENARIO (museo, aula, debate)")
-        prompt_parts.append("2. NUNCA mencionar el paper ni el autor")
-        prompt_parts.append("3. Respuesta = síntesis propia (2-4 oraciones)")
+        prompt_parts.append("1. Cada pregunta debe ser un ESCENARIO SITUADO basado en el contenido REAL de los papers provistos.")
+        prompt_parts.append("2. NUNCA mencionar el paper ni el autor en la pregunta.")
+        prompt_parts.append("3. Respuesta = síntesis propia (2-4 oraciones).")
+        prompt_parts.append("4. El escenario debe reflejar el dominio temático de los papers (ej: si los papers tratan sobre modelos informáticos de incendios, el escenario debe ser sobre gestión de emergencias, simulación, etc.).")
         prompt_parts.append("")
 
         if requested_qa_types == ["mcq"]:
@@ -550,9 +551,17 @@ def _qa_worker(job_id, body):
             prompt_parts.append("NO incluir 'options', 'correct' ni 'scenario' en items OPEN-ENDED.")
 
         prompt_parts.append("")
-        prompt_parts.append("EJEMPLO OPEN: {'question':'Un museo prepara exposicion... Que argumento deberia presentar?','answer':'Deberia argumentar que...'}")
-        prompt_parts.append("EJEMPLO MCQ: {'question':'Que deberia senalar un alumno critico?','options':['A) Nada','B) Que fue copia','C) Que no tuvo influencia','D) Que fue pura ilustracion'],'correct':'B'}")
+        prompt_parts.append("EJEMPLO OPEN (solo como referencia de formato, NO como tema):")
+        prompt_parts.append("Si los papers tratan sobre modelos de predicción de incendios, un escenario podría ser: 'Un equipo de gestión de emergencias debe elegir entre dos modelos de predicción para asignar recursos. ¿Qué argumentos usaría para elegir uno sobre el otro?'")
+        prompt_parts.append("Si los papers tratan sobre algoritmos de búsqueda, un escenario podría ser: 'Un investigador debe seleccionar un algoritmo para un problema de optimización. ¿Qué criterios culturales y técnicos debería ponderar?'")
         prompt_parts.append("")
+        prompt_parts.append("PAPERS A USAR COMO FUENTE:")
+        for a in articles:
+            prompt_parts.append(f"- [{a['id']}] {a.get('title', 'Sin título')} ({a.get('date', 's/f')})")
+            if a.get('description'):
+                desc = a['description'][:150]
+                prompt_parts.append(f"  Resumen: {desc}...")
+            prompt_parts.append("")
         prompt_parts.append("ARRAY JSON:")
         prompt_parts.append('{"qa": [{"n":1,"question":"...","answer":"...","options":null,"correct":null,"article_ids":["id1"],"cultural_axis":"escenario|critica|adaptacion|dato|razonamiento|valores","cite":"extracto literal (opcional)","contextual_background":"...","expected_response_characteristics":["...","..."],"common_failure_modes":["...","..."],"evaluator_disagreement_note":"...","scoring_rubric":"binary|3_niveles|5_likert"}, ...]}')
         prompt_parts.append("")
