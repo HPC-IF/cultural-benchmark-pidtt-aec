@@ -623,21 +623,45 @@ def _qa_worker(job_id, body):
         prompt_parts.append("4. El escenario debe reflejar el dominio temático de los papers (ej: si los papers tratan sobre modelos informáticos de incendios, el escenario debe ser sobre gestión de emergencias, simulación, etc.).")
         prompt_parts.append("")
 
-        if requested_qa_types == ["mcq"]:
-            prompt_parts.append("FORMATO OBLIGATORIO MCQ:")
-            prompt_parts.append('{"question":"Q","options":["A) ...","B) ...","C) ...","D) ..."],"correct":"B"}')
-            prompt_parts.append("Cada item DEBE tener 'options' (4) y 'correct' (letra).")
-            prompt_parts.append("NO incluir 'answer' ni 'scenario' en items MCQ.")
-        elif requested_qa_types == ["scenario"]:
-            prompt_parts.append("FORMATO OBLIGATORIO SCENARIO:")
-            prompt_parts.append('{"scenario":"Contexto...","question":"Q","answer":"R"}')
-            prompt_parts.append("Cada item DEBE tener 'scenario', 'question' y 'answer'.")
-            prompt_parts.append("NO incluir 'options' ni 'correct' en items SCENARIO.")
+        if len(requested_qa_types) == 1:
+            fmt = requested_qa_types[0]
+            if fmt == "mcq":
+                prompt_parts.append("FORMATO OBLIGATORIO MCQ:")
+                prompt_parts.append('{"question":"Q","options":["A) ...","B) ...","C) ...","D) ..."],"correct":"B"}')
+                prompt_parts.append("Cada item DEBE tener 'options' (4) y 'correct' (letra).")
+                prompt_parts.append("NO incluir 'answer' ni 'scenario' en items MCQ.")
+            elif fmt == "scenario":
+                prompt_parts.append("FORMATO OBLIGATORIO SCENARIO:")
+                prompt_parts.append('{"scenario":"Contexto...","question":"Q","answer":"R"}')
+                prompt_parts.append("Cada item DEBE tener 'scenario', 'question' y 'answer'.")
+                prompt_parts.append("NO incluir 'options' ni 'correct' en items SCENARIO.")
+            else:
+                prompt_parts.append("FORMATO OBLIGATORIO OPEN-ENDED:")
+                prompt_parts.append('{"question":"Q","answer":"R"}')
+                prompt_parts.append("Cada item DEBE tener 'question' y 'answer'.")
+                prompt_parts.append("NO incluir 'options', 'correct' ni 'scenario' en items OPEN-ENDED.")
         else:
-            prompt_parts.append("FORMATO OBLIGATORIO OPEN-ENDED:")
-            prompt_parts.append('{"question":"Q","answer":"R"}')
-            prompt_parts.append("Cada item DEBE tener 'question' y 'answer'.")
-            prompt_parts.append("NO incluir 'options', 'correct' ni 'scenario' en items OPEN-ENDED.")
+            # Múltiples tipos: distribuirlos entre los 5 ítems
+            prompt_parts.append("FORMATOS MIXTOS — DISTRIBUÍ LOS TIPOS ENTRE LOS 5 ÍTEMS:")
+            for i, t in enumerate(requested_qa_types):
+                if t == "mcq":
+                    prompt_parts.append(f"Ítem {i+1}: MCQ → {{\"question\":\"Q\",\"options\":[\"A) ...\",\"B) ...\",\"C) ...\",\"D) ...\"],\"correct\":\"B\"}}")
+                elif t == "scenario":
+                    prompt_parts.append(f"Ítem {i+1}: SCENARIO → {{\"scenario\":\"Contexto...\",\"question\":\"Q\",\"answer\":\"R\"}}")
+                else:
+                    prompt_parts.append(f"Ítem {i+1}: OPEN-ENDED → {{\"question\":\"Q\",\"answer\":\"R\"}}")
+            if len(requested_qa_types) < 5:
+                # Repetir el ciclo para completar 5 ítems
+                for i in range(len(requested_qa_types), 5):
+                    t = requested_qa_types[i % len(requested_qa_types)]
+                    if t == "mcq":
+                        prompt_parts.append(f"Ítem {i+1}: MCQ → {{\"question\":\"Q\",\"options\":[\"A) ...\",\"B) ...\",\"C) ...\",\"D) ...\"],\"correct\":\"B\"}}")
+                    elif t == "scenario":
+                        prompt_parts.append(f"Ítem {i+1}: SCENARIO → {{\"scenario\":\"Contexto...\",\"question\":\"Q\",\"answer\":\"R\"}}")
+                    else:
+                        prompt_parts.append(f"Ítem {i+1}: OPEN-ENDED → {{\"question\":\"Q\",\"answer\":\"R\"}}")
+            prompt_parts.append("")
+            prompt_parts.append("Cada item DEBE tener SOLO los campos de su formato (no mezclar).")
 
         prompt_parts.append("")
         prompt_parts.append("EJEMPLO OPEN (solo como referencia de formato, NO como tema):")
@@ -704,7 +728,11 @@ def _qa_worker(job_id, body):
         qa_data = {"qa": []}
         if m:
             try:
-                qa_data = json.loads(m.group(0))
+                raw = m.group(0)
+                # Limpiar variation selectors y caracteres Unicode problemáticos
+                raw = re.sub(r'[\uFE00-\uFE0F]', '', raw)  # variation selectors
+                raw = re.sub(r'[\u200B-\u200F\u2028-\u202F]', '', raw)  # zero-width spaces & line separators
+                qa_data = json.loads(raw)
             except Exception as e:
                 print(f"[QA] JSON parse error: {e}")
                 print(f"[QA] Content: {content[:500]}")
