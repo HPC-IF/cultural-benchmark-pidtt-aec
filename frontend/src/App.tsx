@@ -178,21 +178,21 @@ function setAuth(user: AuthUser) {
   } catch { /* ignore */ }
 }
 const PER_PAGE = 20;
-const RATINGS_KEY = 'pidtt-aec-qa-ratings-v2';
+const RATINGS_KEY = 'pidtt-aec-qa-ratings-v3';
 
-// Dimensiones de puntuación matizadas
+// Dimensiones de puntuación alineadas con ejes de benchmark cultural
 const QUESTION_DIMS = [
-  { id: 'claridad', label: 'Claridad', hint: '¿La pregunta es fácil de entender?' },
-  { id: 'especificidad', label: 'Especificidad', hint: '¿Está bien anclada en el eje cultural?' },
-  { id: 'originalidad', label: 'Originalidad', hint: '¿Es un escenario novedoso o repetido?' },
-  { id: 'utilidad', label: 'Utilidad', hint: '¿Sirve para evaluar competencia cultural?' },
+  { id: 'especificidad', label: 'Especificidad cultural', hint: '¿El escenario está anclado en un contexto cultural concreto y reconocible?' },
+  { id: 'discriminacion', label: 'Poder discriminativo', hint: '¿Diferencia entre respuestas culturalmente competentes e incompetentes?' },
+  { id: 'autenticidad', label: 'Autenticidad', hint: '¿Se siente como una situación real, no un ejercicio forzado?' },
+  { id: 'demanda', label: 'Demanda cognitiva', hint: '¿Requiere razonamiento cultural (no solo memoria)?' },
 ] as const;
 
 const ANSWER_DIMS = [
-  { id: 'fidelidad', label: 'Fidelidad', hint: '¿Refleja el contenido del paper?' },
-  { id: 'completitud', label: 'Completitud', hint: '¿Cubre los puntos clave?' },
-  { id: 'precision', label: 'Precisión cultural', hint: '¿Evita estereotipos y generalizaciones?' },
-  { id: 'utilidad', label: 'Utilidad', hint: '¿Sirve como referencia para evaluar?' },
+  { id: 'precision', label: 'Precisión cultural', hint: '¿Es exacta y matizada, sin estereotipos?' },
+  { id: 'fidelidad', label: 'Fidelidad a la fuente', hint: '¿Refleja fielmente el contenido del paper?' },
+  { id: 'complejidad', label: 'Complejidad', hint: '¿Captura la complejidad del tema cultural?' },
+  { id: 'equidad', label: 'Equidad', hint: '¿Es justa con distintas perspectivas culturales?' },
 ] as const;
 
 type RatingDims = readonly number[];
