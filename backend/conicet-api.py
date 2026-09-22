@@ -12,6 +12,7 @@ import auth
 
 # --- Config ---
 DATA_DIR = "/mnt/shared/conicet-data"
+LIBRARY_DIR = "/mnt/shared/pidtt-aec/libraries"
 LLM_URL = "http://192.168.1.68:8005/v1/chat/completions"
 LLM_MODEL = "citecca-agent"
 HOST = "0.0.0.0"
@@ -127,6 +128,34 @@ def _cov_words(s):
             words.add(w)
     return words
 
+# --- Library (biblioteca de usuario por username) ---
+import threading as _threading
+_library_lock = _threading.Lock()
+
+def _library_path(username):
+    return os.path.join(LIBRARY_DIR, f"{username}.json")
+
+def _load_library(username):
+    """Carga la biblioteca de un usuario. Devuelve lista de doc IDs."""
+    try:
+        os.makedirs(LIBRARY_DIR, exist_ok=True)
+        p = _library_path(username)
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+    except Exception:
+        pass
+    return []
+
+def _save_library(username, ids):
+    """Guarda la biblioteca de un usuario."""
+    os.makedirs(LIBRARY_DIR, exist_ok=True)
+    p = _library_path(username)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(list(ids), f, ensure_ascii=False)
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         print("[{}] {}".format(time.strftime("%H:%M:%S"), args[0]), flush=True)
@@ -169,13 +198,15 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/subjects":
                 return self._handle_subjects(one("limit", "0"))
             if u.path == "/search":
-                return self._handle_search(q)
+                return self._handle_search(q, username)
             if u.path == "/detail":
                 return self._handle_detail(one("id"))
             if u.path == "/generate-qa/status":
                 return self._handle_qa_status(one("job_id"))
             if u.path == "/related":
                 return self._handle_related_get(q)
+            if u.path == "/library":
+                return self._handle_library_get(username)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
@@ -195,9 +226,11 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             if u.path == "/generate-qa":
-                return self._handle_generate_qa()
+                return self._handle_generate_qa(username)
             if u.path == "/related":
                 return self._handle_related_post()
+            if u.path == "/library":
+                return self._handle_library_post(username)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
@@ -220,7 +253,7 @@ class Handler(BaseHTTPRequestHandler):
             subs = subs[:limit]
         return self._json({"subjects": subs})
 
-    def _handle_search(self, q):
+    def _handle_search(self, q, username=None):
         one = lambda k, d="": q.get(k, [d])[0]
         page = int(one("page", "1"))
         if page < 1:
@@ -234,8 +267,15 @@ class Handler(BaseHTTPRequestHandler):
         oa_only = one("oa") == "1"
         subject = one("subject")
         sort = one("sort", "relevance")
+        library_only = one("library_only") == "1"
 
         results = _load_metadata()
+
+        # Filter by library (only docs in user's library)
+        if library_only:
+            with _library_lock:
+                lib_ids = set(_load_library(username))
+            results = [d for d in results if d["id"] in lib_ids]
 
         # Filters
         if query:
@@ -289,11 +329,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "job no encontrado"}, 404)
         return self._json(job)
 
-    def _handle_generate_qa(self):
+    def _handle_generate_qa(self, username=None):
         clen = int(self.headers.get("Content-Length") or 0)
         if clen <= 0 or clen > 50000:
             return self._json({"error": "body invalido"}, 400)
         body = json.loads(self.rfile.read(clen).decode())
+
+        # Si {library: true}, usar biblioteca del usuario como fuentes
+        if body.get("library") and username:
+            with _library_lock:
+                lib_ids = _load_library(username)
+            if not lib_ids:
+                return self._json({"error": "biblioteca vacía"}, 400)
+            body["ids"] = lib_ids
+            body["all"] = False
 
         job_id = secrets.token_hex(16)
         now = time.time()
@@ -311,6 +360,40 @@ class Handler(BaseHTTPRequestHandler):
             ids = [ids]
         limit = int(one("limit", "10"))
         return self._do_related(ids, limit)
+
+    def _handle_library_get(self, username):
+        """GET /library — devuelve la biblioteca del usuario."""
+        with _library_lock:
+            ids = _load_library(username)
+        return self._json({"ids": ids, "total": len(ids)})
+
+    def _handle_library_post(self, username):
+        """POST /library — modifica la biblioteca del usuario.
+        Body: {action: "add"|"remove"|"set", ids: string[]}
+        """
+        clen = int(self.headers.get("Content-Length") or 0)
+        if clen <= 0 or clen > 50000:
+            return self._json({"error": "body invalido"}, 400)
+        body = json.loads(self.rfile.read(clen).decode())
+        action = body.get("action", "")
+        ids = body.get("ids", [])
+        if not isinstance(ids, list):
+            return self._json({"error": "ids debe ser una lista"}, 400)
+
+        with _library_lock:
+            current = _load_library(username)
+            current_set = set(current)
+            if action == "add":
+                current_set.update(ids)
+            elif action == "remove":
+                current_set.difference_update(ids)
+            elif action == "set":
+                current_set = set(ids)
+            else:
+                return self._json({"error": "accion invalida (add|remove|set)"}, 400)
+            _save_library(username, list(current_set))
+            new_ids = _load_library(username)
+        return self._json({"ids": new_ids, "total": len(new_ids)})
 
     def _handle_related_post(self):
         clen = int(self.headers.get("Content-Length") or 0)

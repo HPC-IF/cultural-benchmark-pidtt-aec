@@ -117,6 +117,11 @@ interface RelatedData {
   took_ms: number;
 }
 
+interface LibraryResponse {
+  ids: string[];
+  total: number;
+}
+
 const AXIS_LABEL: Record<string, string> = {
   cultural_fact: 'dato cultural',
   cultural_reasoning: 'razonamiento cultural',
@@ -371,7 +376,7 @@ function App() {
     try { await apiFetch('/auth/logout', { method: 'POST' }); } catch { /* ignore */ }
     clearAuth();
     setAuthUser(null);
-  };
+  }
 
   const [query, setQuery] = useState('');
   const [author, setAuthor] = useState('');
@@ -382,12 +387,12 @@ function App() {
   const [sortNew, setSortNew] = useState(false);
   const [page, setPage] = useState(1);
 
-  // Seleccion multiple: "selected" son marcas explicitas; "selectAllFiltered"
-  // marca TODO lo filtrado (todas las paginas) y "excluded" las deselecciones
-  // puntuales dentro de ese modo.
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [excluded, setExcluded] = useState<Set<string>>(new Set());
-  const [selectAllFiltered, setSelectAllFiltered] = useState(false);
+  // Biblioteca de usuario
+  const [library, setLibrary] = useState<string[]>([]);
+  const [libraryOnly, setLibraryOnly] = useState(false);
+
+  // Tabs: "fuentes" | "generacion"
+  const [activeTab, setActiveTab] = useState<'fuentes' | 'generacion'>('fuentes');
 
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -512,26 +517,44 @@ function App() {
     return r;
   }
 
+  // ==== Biblioteca: cargar al login y cuando cambia el usuario ====
+  const loadLibrary = async () => {
+    if (!authUser) { setLibrary([]); return; }
+    try {
+      const r = await apiFetch('/library');
+      const d = await r.json();
+      if (r.ok) setLibrary(d.ids || []);
+    } catch { setLibrary([]); }
+  };
+
+  useEffect(() => {
+    loadLibrary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser]);
+
+  const toggleLibraryItem = async (id: string) => {
+    if (!authUser) return;
+    const isLib = library.includes(id);
+    const action = isLib ? 'remove' : 'add';
+    try {
+      const r = await apiFetch('/library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ids: [id] }),
+      });
+      const d = await r.json();
+      if (r.ok) setLibrary(d.ids || []);
+    } catch { /* ignore */ }
+  };
+
+  const isItemInLibrary = (id: string) => library.includes(id);
+
   const searchRelated = async () => {
     setRelatedLoading(true);
     setRelatedError(null);
     setRelated(null);
     try {
-      const payload: Record<string, unknown> = selectAllFiltered
-        ? {
-            all: true,
-            filters: {
-              q: query.trim(),
-              author: author.trim(),
-              year_from: yearFrom,
-              year_to: yearTo,
-              oa: oaOnly ? '1' : '',
-              subject,
-              sort: sortNew ? 'new' : 'relevance',
-            },
-            excluded: [...excluded],
-          }
-        : { ids: [...selected] };
+      const payload: Record<string, unknown> = { ids: library.length > 0 ? library : (data?.results || []).map(r => r.id) };
       const r = await apiFetch('/related', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -574,30 +597,12 @@ function App() {
     setQa(null);
     setQaPhase({ phase: 'resolving', detail: 'Preparando la generación…', pct: 1, elapsed_s: 0 });
     try {
-      // Obtener IDs base
-      let baseIds: string[] = selectAllFiltered
-        ? [] // se maneja via filters
-        : [...selected];
-
-      const payload: Record<string, unknown> = selectAllFiltered
-        ? {
-            all: true,
-            filters: {
-              q: query.trim(),
-              author: author.trim(),
-              year_from: yearFrom,
-              year_to: yearTo,
-              oa: oaOnly ? '1' : '',
-              subject,
-              sort: sortNew ? 'new' : 'relevance',
-            },
-            excluded: [...excluded],
-          }
-        : { ids: baseIds };
-
-      // Agregar opciones de configuración
-      payload.axes = [...qaAxes];
-      payload.qa_types = [...qaTypes];
+      // Usar biblioteca del usuario como fuentes
+      const payload: Record<string, unknown> = {
+        library: true,
+        axes: [...qaAxes],
+        qa_types: [...qaTypes],
+      };
 
       const r = await apiFetch('/generate-qa', {
         method: 'POST',
@@ -672,6 +677,7 @@ function App() {
       if (oaOnly) params.set('oa', '1');
       if (subject) params.set('subject', subject);
       if (sortNew) params.set('sort', 'new');
+      if (libraryOnly) params.set('library_only', '1');
       params.set('page', String(page));
       apiFetch(`/search?${params}`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`search HTTP ${r.status}`))))
@@ -689,7 +695,7 @@ function App() {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
-  }, [query, author, yearFrom, yearTo, oaOnly, subject, sortNew, page]);
+  }, [query, author, yearFrom, yearTo, oaOnly, subject, sortNew, page, libraryOnly]);
 
   useEffect(() => {
     if (!detailId) return;
@@ -717,54 +723,12 @@ function App() {
     setDetail(null);
   };
 
-  const toggleSelect = (id: string) => {
-    if (selectAllFiltered) {
-      setExcluded((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        return next;
-      });
-    } else {
-      setSelected((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        return next;
-      });
-    }
-  };
-
-  const isItemSelected = (id: string) =>
-    selectAllFiltered ? !excluded.has(id) : selected.has(id);
-
-  const clearSelection = () => {
-    setSelected(new Set());
-    setExcluded(new Set());
-    setSelectAllFiltered(false);
-    setQa(null);
-    setQaError(null);
-    setRelated(null);
-    setRelatedError(null);
-  };
-
-  const selectAll = () => {
-    setSelected(new Set());
-    setExcluded(new Set());
-    setSelectAllFiltered(true);
-  };
-
   const resetPageOnFilterChange = (fn: () => void) => {
     fn();
     setPage(1);
-    // un cambio de filtros invalida la seleccion
-    clearSelection();
   };
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.per_page)) : 1;
-  const selectedCount = selectAllFiltered
-    ? Math.max(0, (data?.total ?? 0) - excluded.size)
-    : selected.size;
   const hasFilters = Boolean(query || author || yearFrom || yearTo || subject || oaOnly || sortNew);
 
   if (!authUser) {
@@ -828,635 +792,686 @@ function App() {
       </header>
 
       <main className="app-main">
-        <div className="search-bar">
-          <input
-            type="search"
-            className="input search-input"
-            placeholder="Buscar por título, autor o materia… (ej.: incendio, radar, supernova)"
-            value={query}
-            onChange={(e) => resetPageOnFilterChange(() => setQuery(e.target.value))}
-            aria-label="Buscar publicaciones"
-          />
-          <div className="filters">
-            <label className="filter">
-              <span>Autor</span>
-              <input
-                type="search"
-                className="input author-input"
-                placeholder="ej.: denham"
-                value={author}
-                onChange={(e) => resetPageOnFilterChange(() => setAuthor(e.target.value))}
-              />
-            </label>
-            <label className="filter">
-              <span>De</span>
-              <input
-                type="number"
-                className="input year-input"
-                placeholder="año"
-                min={stats?.year_min ?? 1900}
-                max={stats?.year_max ?? 2026}
-                value={yearFrom}
-                onChange={(e) => resetPageOnFilterChange(() => setYearFrom(e.target.value))}
-              />
-            </label>
-            <label className="filter">
-              <span>Hasta</span>
-              <input
-                type="number"
-                className="input year-input"
-                placeholder="año"
-                min={stats?.year_min ?? 1900}
-                max={stats?.year_max ?? 2026}
-                value={yearTo}
-                onChange={(e) => resetPageOnFilterChange(() => setYearTo(e.target.value))}
-              />
-            </label>
-            <label className="filter">
-              <span>Materia</span>
-              <select
-                className="input select"
-                value={subject}
-                onChange={(e) => resetPageOnFilterChange(() => setSubject(e.target.value))}
-              >
-                <option value="">Todas</option>
-                {subjects.map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {s.name} ({formatNumber(s.count)})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="filter checkbox-filter">
-              <input
-                type="checkbox"
-                checked={oaOnly}
-                onChange={(e) => resetPageOnFilterChange(() => setOaOnly(e.target.checked))}
-              />
-              <span>Solo acceso abierto</span>
-            </label>
-            <label className="filter checkbox-filter">
-              <input
-                type="checkbox"
-                checked={sortNew}
-                onChange={(e) => resetPageOnFilterChange(() => setSortNew(e.target.checked))}
-              />
-              <span>Más recientes primero</span>
-            </label>
-            {hasFilters && (
-              <button
-                type="button"
-                className="clear-btn"
-                onClick={() => {
-                  setQuery('');
-                  setAuthor('');
-                  setYearFrom('');
-                  setYearTo('');
-                  setSubject('');
-                  setOaOnly(false);
-                  setSortNew(false);
-                  setPage(1);
-                  clearSelection();
-                }}
-              >
-                Limpiar filtros
-              </button>
-            )}
-          </div>
+        {/* ── Tabs ── */}
+        <div className="tabs-bar" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'fuentes'}
+            className={`tab-btn${activeTab === 'fuentes' ? ' active' : ''}`}
+            onClick={() => setActiveTab('fuentes')}
+          >
+            <span className="tab-icon">📚</span>
+            <span>Fuentes</span>
+            <span className="tab-count">{formatNumber(library.length)}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'generacion'}
+            className={`tab-btn${activeTab === 'generacion' ? ' active' : ''}`}
+            onClick={() => setActiveTab('generacion')}
+          >
+            <span className="tab-icon">✏️</span>
+            <span>Generación</span>
+          </button>
         </div>
 
-        <div className="layout">
-          {/* ── Izquierda: fuentes (resultados filtrados + seleccion) ── */}
-          <aside className="panel panel-sources" aria-label="Fuentes seleccionadas">
-            <div className="panel-head">
-              <h2>Fuentes seleccionadas</h2>
-              <span className="panel-count" aria-live="polite">
-                {data ? `${formatNumber(selectedCount)} / ${formatNumber(data.total)}` : '…'}
-              </span>
-            </div>
-            <div className="sources-controls">
-              <button
-                type="button"
-                className="select-all-btn"
-                onClick={selectAll}
-                title="Selecciona todos los resultados de esta búsqueda (todas las páginas)"
-              >
-                Seleccionar todos
-              </button>
-              <button type="button" className="clear-btn" onClick={clearSelection}>
-                Limpiar selección
-              </button>
-              <button
-                type="button"
-                className="btn-relate"
-                onClick={searchRelated}
-                disabled={relatedLoading || (data?.total ?? 0) === 0}
-                title="Busca por embeddings los 10 papers más cercanos en el espacio vectorial a la selección (o a todos los filtrados si no hay selección)"
-              >
-                {relatedLoading ? 'Buscando…' : 'Buscar papers relacionados'}
-              </button>
-            </div>
-
-            {relatedLoading && (
-              <div className="related-loading">
-                <div className="qa-spinner small" aria-hidden="true" />
-                <p>Buscando los 10 papers más cercanos en el espacio vectorial…</p>
-              </div>
-            )}
-
-            {relatedError && (
-              <div className="related-error" role="alert">
-                {relatedError}
-              </div>
-            )}
-
-            <div className="sources-list">
-              {loading && !data && <div className="empty small">Cargando…</div>}
-              {!loading && error && <div className="empty small">Error consultando las publicaciones.</div>}
-              {data && data.results.length === 0 && (
-                <div className="empty small">
-                  No se encontraron publicaciones con esos criterios. Probá con otra búsqueda o quitá filtros.
-                </div>
-              )}
-              {data &&
-                data.results.map((r) => (
-                  <div key={r.id} className={`source-item${isItemSelected(r.id) ? ' selected' : ''}${r.open_access ? '' : ' no-oa'}`}>
-                    <label
-                      className="source-check"
-                      title={isItemSelected(r.id) ? 'Deseleccionar' : 'Seleccionar'}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isItemSelected(r.id)}
-                        onChange={() => toggleSelect(r.id)}
-                      />
-                    </label>
-                    <div className="source-body">
-                      <button
-                        type="button"
-                        className="source-title"
-                        onClick={() => openDetail(r.id)}
-                        title={r.title}
-                      >
-                        {r.title}
-                      </button>
-                      <p className="source-meta">
-                        {r.creators ? r.creators : 'Sin autores'}
-                        {r.date ? ` · ${formatDate(r.date)}` : ''}
-                        {r.open_access ? <span className="oa-badge">OA</span> : <span className="no-oa-badge">sin PDF</span>}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-            </div>
-            <div className="sources-foot">
-              {data && (
-                <span>
-                  {formatNumber(data.total)} resultado{data.total === 1 ? '' : 's'} · {data.took_ms} ms
-                </span>
-              )}
-              {totalPages > 1 && (
-                <div className="pagination mini">
+        {/* ── Tab Fuentes ── */}
+        {activeTab === 'fuentes' && (
+          <div className="tab-panel">
+            <div className="search-bar">
+              <input
+                type="search"
+                className="input search-input"
+                placeholder="Buscar por título, autor o materia… (ej.: incendio, radar, supernova)"
+                value={query}
+                onChange={(e) => resetPageOnFilterChange(() => setQuery(e.target.value))}
+                aria-label="Buscar publicaciones"
+              />
+              <div className="filters">
+                <label className="filter">
+                  <span>Autor</span>
+                  <input
+                    type="search"
+                    className="input author-input"
+                    placeholder="ej.: denham"
+                    value={author}
+                    onChange={(e) => resetPageOnFilterChange(() => setAuthor(e.target.value))}
+                  />
+                </label>
+                <label className="filter">
+                  <span>De</span>
+                  <input
+                    type="number"
+                    className="input year-input"
+                    placeholder="año"
+                    min={stats?.year_min ?? 1900}
+                    max={stats?.year_max ?? 2026}
+                    value={yearFrom}
+                    onChange={(e) => resetPageOnFilterChange(() => setYearFrom(e.target.value))}
+                  />
+                </label>
+                <label className="filter">
+                  <span>Hasta</span>
+                  <input
+                    type="number"
+                    className="input year-input"
+                    placeholder="año"
+                    min={stats?.year_min ?? 1900}
+                    max={stats?.year_max ?? 2026}
+                    value={yearTo}
+                    onChange={(e) => resetPageOnFilterChange(() => setYearTo(e.target.value))}
+                  />
+                </label>
+                <label className="filter">
+                  <span>Materia</span>
+                  <select
+                    className="input select"
+                    value={subject}
+                    onChange={(e) => resetPageOnFilterChange(() => setSubject(e.target.value))}
+                  >
+                    <option value="">Todas</option>
+                    {subjects.map((s) => (
+                      <option key={s.name} value={s.name}>
+                        {s.name} ({formatNumber(s.count)})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="filter checkbox-filter">
+                  <input
+                    type="checkbox"
+                    checked={oaOnly}
+                    onChange={(e) => resetPageOnFilterChange(() => setOaOnly(e.target.checked))}
+                  />
+                  <span>Solo acceso abierto</span>
+                </label>
+                <label className="filter checkbox-filter">
+                  <input
+                    type="checkbox"
+                    checked={sortNew}
+                    onChange={(e) => resetPageOnFilterChange(() => setSortNew(e.target.checked))}
+                  />
+                  <span>Más recientes primero</span>
+                </label>
+                <label className="filter checkbox-filter">
+                  <input
+                    type="checkbox"
+                    checked={libraryOnly}
+                    onChange={(e) => resetPageOnFilterChange(() => setLibraryOnly(e.target.checked))}
+                  />
+                  <span>Solo biblioteca</span>
+                </label>
+                {hasFilters && (
                   <button
                     type="button"
-                    className="page-btn"
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    className="clear-btn"
+                    onClick={() => {
+                      setQuery('');
+                      setAuthor('');
+                      setYearFrom('');
+                      setYearTo('');
+                      setSubject('');
+                      setOaOnly(false);
+                      setSortNew(false);
+                      setPage(1);
+                    }}
                   >
-                    ← Anterior
+                    Limpiar filtros
                   </button>
-                  <span className="page-info">{data?.page} / {totalPages}</span>
-                  <button
-                    type="button"
-                    className="page-btn"
-                    disabled={page >= totalPages}
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  >
-                    Siguiente →
-                  </button>
-                </div>
-              )}
-            </div>
-          </aside>
-
-          {/* ── Panel central: generate bar + P&R + papers relacionados ── */}
-          <div className="center-stack">
-          {/* ── Generate bar (config + botón) ── */}
-          <div className="generate-bar">
-            {/* Panel de configuración de QAs */}
-            <div className="qa-config">
-              <button type="button" className="qa-config-toggle" onClick={() => setQaConfigOpen(!qaConfigOpen)}>
-                <span className="qa-config-toggle-icon">{qaConfigOpen ? '▾' : '▸'}</span>
-                <span className="qa-config-toggle-label">Configuración</span>
-                <span className="qa-config-toggle-badges">
-                  {qaTypes.size > 0 && <span className="qa-badge qa-badge-type">{qaTypes.size} tipo{qaTypes.size > 1 ? 's' : ''}</span>}
-                  {qaAxes.size > 0 && <span className="qa-badge qa-badge-axis">{qaAxes.size} eje{qaAxes.size > 1 ? 's' : ''}</span>}
-                </span>
-              </button>
-              {qaConfigOpen && (
-                <div className="qa-config-body">
-                  <div className="qa-config-section">
-                    <span className="qa-config-label">Tipo de QA</span>
-                    <div className="qa-type-grid">
-                      {qaTypeOptions.map(t => (
-                        <label key={t.id} className={`qa-type-chip${qaTypes.has(t.id) ? ' active' : ''}`}>
-                          <input type="checkbox" checked={qaTypes.has(t.id)} onChange={() => toggleQaType(t.id)} />
-                          <span className="qa-type-icon">{t.icon}</span>
-                          <span className="qa-type-label">{t.label}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="qa-config-section">
-                    <span className="qa-config-label">Ejes cognitivos</span>
-                    <div className="qa-axes-grid">
-                      {qaAxesOptions.map(ax => (
-                        <label key={ax.id} className={`qa-axis-chip${qaAxes.has(ax.id) ? ' active' : ''}`} style={{ '--ax-color': ax.color } as React.CSSProperties}>
-                          <input type="checkbox" checked={qaAxes.has(ax.id)} onChange={() => toggleQaAxis(ax.id)} />
-                          <span className="qa-axis-dot" style={{ backgroundColor: ax.color }}></span>
-                          <span className="qa-axis-label">{ax.label}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              className="btn-generate"
-              onClick={generateQa}
-              disabled={qaLoading || selectedCount === 0}
-              title="Genera 5 preguntas y respuestas a partir de los papers seleccionados"
-            >
-              {qaLoading ? 'Generando…' : 'Generar preguntas y respuestas'}
-            </button>
-            <p className="actions-hint">
-              {selectedCount > 0
-                ? `${formatNumber(selectedCount)} fuente${selectedCount === 1 ? '' : 's'} seleccionada${selectedCount === 1 ? '' : 's'}${selectAllFiltered ? ' (todos los filtrados)' : ''}`
-                : 'Seleccioná fuentes para habilitar la generación.'}
-            </p>
-          </div>
-          {/* ── Papers relacionados ── */}
-          {relatedLoading && (
-            <div className="related-loading">
-              <div className="qa-spinner small" aria-hidden="true" />
-              <p>Buscando los 10 papers más cercanos en el espacio vectorial…</p>
-            </div>
-          )}
-          {relatedError && (
-            <div className="related-error" role="alert">
-              {relatedError}
-            </div>
-          )}
-          {related && (
-            <div className="related-section-inline">
-              <div className="related-head">
-                <h3>Papers relacionados</h3>
-                <button
-                  type="button"
-                  className="clear-btn"
-                  onClick={() => setRelated(null)}
-                  title="Cerrar resultados de relacionados"
-                >
-                  ✕
-                </button>
-              </div>
-              <p className="related-sub">
-                {related.requested > 1
-                  ? `Cercanía a ${related.requested} artículos seleccionados · `
-                  : 'Cercanía al artículo seleccionado · '}
-                índice de {formatNumber(related.index_size)} papers ·{' '}
-                {Math.round(related.took_ms / 100) / 10} s
-              </p>
-              <p className="related-hint">
-                Tildá los papers que quieras incluir en la generación de preguntas — se suman a la selección.
-              </p>
-              <div className="related-list">
-                {related.results.map((r) => (
-                  <div
-                    key={r.id}
-                    className={`related-item${isItemSelected(r.id) ? ' selected' : ''}`}
-                  >
-                    <label className="related-check" title={isItemSelected(r.id) ? 'Deseleccionar para la generación' : 'Incluir en la generación'}>
-                      <input
-                        type="checkbox"
-                        checked={isItemSelected(r.id)}
-                        onChange={() => toggleSelect(r.id)}
-                        aria-label={`Incluir ${r.title}`}
-                      />
-                    </label>
-                    <div className="related-sim">
-                      <span
-                        className="related-sim-bar"
-                        style={{ width: `${Math.round(r.similarity * 100)}%` }}
-                      />
-                      <span className="related-sim-label" title="Similitud coseno en el espacio de embeddings">
-                        {Math.round(r.similarity * 100)}%
-                      </span>
-                    </div>
-                    <div className="related-body">
-                      <button
-                        type="button"
-                        className="source-title"
-                        onClick={() => openDetail(r.id)}
-                        title={r.title}
-                      >
-                        {r.title}
-                      </button>
-                      <p className="source-meta">
-                        {r.creators ? r.creators : 'Sin autores'}
-                        {r.date ? ` · ${formatDate(r.date)}` : ''}
-                        {r.open_access ? <span className="oa-badge">OA</span> : <span className="no-oa-badge">sin PDF</span>}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                )}
               </div>
             </div>
-          )}
-          {/* ── Centro: chat de preguntas y respuestas ── */}
-          <section className="panel panel-chat" aria-label="Preguntas y respuestas">
-            <div className="panel-head">
-              <h2>Preguntas y respuestas</h2>
-              {qa && !qaLoading ? (
-                <button type="button" className="clear-btn" onClick={() => setQa(null)}>
-                  Cerrar
-                </button>
-              ) : null}
-            </div>
-            <div className="chat-body" id="qa-section">
-              {(
-                <>
-              {qaLoading && (
-                <div className="qa-loading" role="status">
-                  <div className="qa-spinner" aria-hidden="true" />
-                  <div className="qa-loading-body">
-                    <p className="qa-loading-title">Generando preguntas y respuestas…</p>
-                    <ol className="qa-steps">
-                      {[
-                        { id: 'fulltext', label: 'Preparando textos (PDF → texto completo)' },
-                        { id: 'llm', label: 'El modelo escribe los 5 items' },
-                        { id: 'lint', label: 'Auto-auditoría del lote' },
-                      ].map((st) => {
-                        const order = ['resolving', 'fulltext', 'llm', 'lint', 'done'];
-                        const cur = qaPhase ? order.indexOf(qaPhase.phase) : -1;
-                        const stIdx = order.indexOf(st.id);
-                        const cls = stIdx < cur ? 'step-done' : stIdx === cur ? 'step-active' : 'step-todo';
-                        return (
-                          <li key={st.id} className={`qa-step ${cls}`}>
-                            <span className="qa-step-mark" aria-hidden="true">
-                              {stIdx < cur ? '✓' : stIdx === cur ? '●' : '○'}
-                            </span>
-                            {st.label}
-                            {stIdx === cur && qaPhase?.detail && (
-                              <span className="qa-step-detail"> — {qaPhase.detail}</span>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ol>
-                    <div className="qa-progress">
-                      <div className="qa-progress-bar" style={{ width: `${qaPhase?.pct ?? 0}%` }} />
-                    </div>
-                    <p className="qa-loading-sub">
-                      {qaPhase?.elapsed_s ? `${Math.round(qaPhase.elapsed_s)} s transcurridos` : ''}
-                      {' '}· puede tardar entre 1 y 4 minutos (más si hay que descargar PDFs nuevos).
-                    </p>
+
+            <div className="layout">
+              {/* ── Izquierda: fuentes (resultados filtrados + biblioteca) ── */}
+              <aside className="panel panel-sources" aria-label="Fuentes">
+                <div className="panel-head">
+                  <h2>Publicaciones</h2>
+                  <span className="panel-count" aria-live="polite">
+                    {data ? `${formatNumber(data.total)}` : '…'}
+                  </span>
+                </div>
+
+                {relatedLoading && (
+                  <div className="related-loading">
+                    <div className="qa-spinner small" aria-hidden="true" />
+                    <p>Buscando los 10 papers más cercanos en el espacio vectorial…</p>
                   </div>
-                </div>
-              )}
+                )}
 
-              {qaError && (
-                <div className="error" role="alert">
-                  <strong>No se pudieron generar las preguntas:</strong> {qaError}
-                </div>
-              )}
+                {relatedError && (
+                  <div className="related-error" role="alert">
+                    {relatedError}
+                  </div>
+                )}
 
-              {qa && (
-                <div className="chat-turns">
-                  <p className="chat-note">
-                    {qa.fulltext_count ? (
-                      <>Generadas a partir del texto completo de {qa.fulltext_count} de {qa.with_abstract} artículo{qa.with_abstract === 1 ? '' : 's'} (el resto solo abstract)</>
-                    ) : (
-                      <>Generadas a partir de los resúmenes de {qa.with_abstract} artículo{qa.with_abstract === 1 ? '' : 's'} (sin texto completo disponible)</>
-                    )}
-                    {qa.requested !== qa.with_abstract ? ` (se seleccionaron ${qa.requested}, los demás no traen resumen)` : ''}{' '}
-                    — {Math.round(qa.took_ms / 100) / 10} s
-                  </p>
-                  {qa.qa.map((item) => {
-                    const flags = (qa.lint?.flags || []).filter((f) => f.n === item.n);
-                    return (
-                      <div className="chat-turn" key={item.n}>
-                        <div className={`chat-bubble question${flags.length ? ' flagged' : ''}`}>
-                          <span className="bubble-label">
-                            P{item.n}
-                            {item.cultural_axis && (
-                              <span className={`qa-axis ${AXIS_CLASS[item.cultural_axis] || ''}`}>
-                                {AXIS_LABEL[item.cultural_axis] || item.cultural_axis}
-                              </span>
-                            )}
-                          </span>
-                          <p>{item.question}</p>
-                        </div>
-                        <div className="chat-bubble answer">
-                          <span className="bubble-label answer-label">R{item.n}</span>
-                          {item.options ? (
-                            // MCQ
-                            <div className="qa-mcq">
-                              {item.options.map((opt: string, i: number) => (
-                                <div key={i} className={`qa-mcq-option${opt.startsWith(item.correct) ? ' correct' : ''}`}>
-                                  {opt}
-                                </div>
-                              ))}
-                            </div>
-                          ) : item.scenario ? (
-                            // Scenario
-                            <div className="qa-scenario-block">
-                              <p className="qa-scenario-text">{item.scenario}</p>
-                              <p className="qa-scenario-answer">{item.answer}</p>
-                            </div>
-                          ) : (
-                            // Open-ended
-                            <p>{item.answer}</p>
-                          )}
-                          <QARating
-                            value={ratings[hashKey(item.question)] || 0}
-                            onChange={(v) => setRating(item, v)}
+                <div className="sources-list">
+                  {loading && !data && <div className="empty small">Cargando…</div>}
+                  {!loading && error && <div className="empty small">Error consultando las publicaciones.</div>}
+                  {data && data.results.length === 0 && (
+                    <div className="empty small">
+                      No se encontraron publicaciones con esos criterios. Probá con otra búsqueda o quitá filtros.
+                    </div>
+                  )}
+                  {data &&
+                    data.results.map((r) => (
+                      <div key={r.id} className={`source-item${isItemInLibrary(r.id) ? ' in-library' : ''}${r.open_access ? '' : ' no-oa'}`}>
+                        <label
+                          className="source-check"
+                          title={isItemInLibrary(r.id) ? 'Quitar de biblioteca' : 'Agregar a biblioteca'}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isItemInLibrary(r.id)}
+                            onChange={() => toggleLibraryItem(r.id)}
                           />
-                          {ratings[hashKey(item.question)] > 0 && (
-                            <textarea
-                              className="qa-notes"
-                              placeholder="Agregar una nota…"
-                              value={notes[hashKey(item.question)] || ''}
-                              onChange={(e) => saveNote(hashKey(item.question), e.target.value)}
-                              rows={2}
-                            />
-                          )}
-                          {(item.cite || item.article_ids.length > 0 || item.cultural_axis || flags.length > 0) && (
-                            <div className="qa-collapsible qa-answer-details">
-                              <button
-                                type="button"
-                                className="qa-collapsible-header"
-                                onClick={() => setExpanded((p) => ({ ...p, [`${item.n}-details`]: !p[`${item.n}-details`] }))}
-                                aria-expanded={!!expanded[`${item.n}-details`]}
-                              >
-                                <span className="qa-collapsible-icon">{expanded[`${item.n}-details`] ? '▾' : '▸'}</span>
-                                Detalles {flags.length > 0 && <span style={{color:'var(--gold)',fontWeight:700}}>· {flags.length} flag{flags.length>1?'s':''}</span>}
-                              </button>
-                              {expanded[`${item.n}-details`] && (
-                                <div className="qa-collapsible-body">
-                                  {/* Cultural Axis with tooltip */}
-                                  {item.cultural_axis && (
-                                    <div className="qa-detail-row">
-                                      <span className="qa-detail-icon" title="Dimensión de competencia cultural que evalúa este ítem">🎯</span>
-                                      <div className="qa-detail-content">
-                                        <span className="qa-detail-label">Eje cultural</span>
-                                        <span className="qa-cultural-axis">{CULTURAL_AXIS_LABELS[item.cultural_axis] || item.cultural_axis}</span>
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Contextual Background with tooltip */}
-                                  {item.contextual_background && (
-                                    <div className="qa-detail-row">
-                                      <span className="qa-detail-icon" title="Contexto que debe conocer el evaluador para juzgar la respuesta">📖</span>
-                                      <div className="qa-detail-content">
-                                        <span className="qa-detail-label">Contexto</span>
-                                        <p className="qa-context">{item.contextual_background}</p>
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Expected Response Characteristics with tooltip */}
-                                  {item.expected_response_characteristics && item.expected_response_characteristics.length > 0 && (
-                                    <div className="qa-detail-row">
-                                      <span className="qa-detail-icon" title="Características que debe tener una respuesta culturalmente competente">✅</span>
-                                      <div className="qa-detail-content">
-                                        <span className="qa-detail-label">Características esperadas</span>
-                                        <ul className="qa-expected-list">
-                                          {item.expected_response_characteristics.map((c, i) => <li key={i}>{c}</li>)}
-                                        </ul>
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Common Failure Modes with tooltip */}
-                                  {item.common_failure_modes && item.common_failure_modes.length > 0 && (
-                                    <div className="qa-detail-row">
-                                      <span className="qa-detail-icon" title="Errores que revelan incompetencia cultural">⚠️</span>
-                                      <div className="qa-detail-content">
-                                        <span className="qa-detail-label">Fallas comunes</span>
-                                        <ul className="qa-failure-list">
-                                          {item.common_failure_modes.map((f, i) => <li key={i}>{f}</li>)}
-                                        </ul>
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Evaluator Disagreement with tooltip */}
-                                  {item.evaluator_disagreement_note && (
-                                    <div className="qa-detail-row">
-                                      <span className="qa-detail-icon" title="Áreas donde evaluadores de distintas culturas podrían discrepar (señal de buen ítem)">💬</span>
-                                      <div className="qa-detail-content">
-                                        <span className="qa-detail-label">Posible desacuerdo</span>
-                                        <p className="qa-disagreement">{item.evaluator_disagreement_note}</p>
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Scoring Rubric with tooltip */}
-                                  {item.scoring_rubric && (
-                                    <div className="qa-detail-row">
-                                      <span className="qa-detail-icon" title="Rúbrica de evaluación del ítem">📊</span>
-                                      <div className="qa-detail-content">
-                                        <span className="qa-detail-label">Rúbrica</span>
-                                        <span className="qa-scoring">{SCORING_RUBRIC_LABELS[item.scoring_rubric] || item.scoring_rubric}</span>
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Cite with tooltip */}
-                                  {item.cite && (
-                                    <div className="qa-detail-row">
-                                      <span className="qa-detail-icon" title="Extracto literal del paper fuente (Ctrl+F verificable)">📝</span>
-                                      <div className="qa-detail-content">
-                                        <span className="qa-detail-label">Cita</span>
-                                        <p className="qa-cite">«{item.cite}»</p>
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Sources with tooltip */}
-                                  {item.article_ids.length > 0 && (
-                                    <div className="qa-detail-row">
-                                      <span className="qa-detail-icon" title="Papers fuente en los que se basa el ítem">📚</span>
-                                      <div className="qa-detail-content">
-                                        <span className="qa-detail-label">Basado en</span>
-                                        <p className="qa-sources">
-                                          {item.article_ids.map((aid, idx) => {
-                                            const src = qa.used_articles.find((a) => a.id === aid);
-                                            const label = src ? (
-                                              <a href="#" onClick={(e) => { e.preventDefault(); openDetail(aid); }} title={src.title}>
-                                                {src.title.length > 60 ? src.title.slice(0, 60) + '…' : src.title}
-                                              </a>
-                                            ) : (
-                                              <span>art. {aid}</span>
-                                            );
-                                            return (
-                                              <span key={aid}>
-                                                {idx > 0 && <span className="qa-sources-sep"> · </span>}
-                                                {label}
-                                              </span>
-                                            );
-                                          })}
-                                        </p>
-                                      </div>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Flags */}
-                                  {flags.map((f, i) => (
-                                    <div className="qa-detail-row flag-row" key={i}>
-                                      <span className="qa-detail-icon">⚡</span>
-                                      <div className="qa-detail-content">
-                                        <span className="qa-flag">{f.detail}</span>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
+                        </label>
+                        <div className="source-body">
+                          <button
+                            type="button"
+                            className="source-title"
+                            onClick={() => openDetail(r.id)}
+                            title={r.title}
+                          >
+                            {r.title}
+                          </button>
+                          <p className="source-meta">
+                            {r.creators ? r.creators : 'Sin autores'}
+                            {r.date ? ` · ${formatDate(r.date)}` : ''}
+                            {r.open_access ? <span className="oa-badge">OA</span> : <span className="no-oa-badge">sin PDF</span>}
+                          </p>
                         </div>
                       </div>
-                    );
-                  })}
-                  {qa.lint && qa.lint.flags.length > 0 && (
-                    <div className="qa-lint-note">
-                      <strong>{qa.lint.flags.length} item{qa.lint.flags.length === 1 ? '' : 's'} con flag de auto-auditoría</strong>
-                      {' — '}{qa.lint.note} (mezcla de ejes: {Object.entries(qa.lint.axis_mix).map(([a, n]) => `${AXIS_LABEL[a] || a} ${n}`).join(' · ')})
+                    ))}
+                </div>
+                <div className="sources-foot">
+                  {data && (
+                    <span>
+                      {formatNumber(data.total)} resultado{data.total === 1 ? '' : 's'} · {data.took_ms} ms
+                    </span>
+                  )}
+                  {totalPages > 1 && (
+                    <div className="pagination mini">
+                      <button
+                        type="button"
+                        className="page-btn"
+                        disabled={page <= 1}
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      >
+                        ← Anterior
+                      </button>
+                      <span className="page-info">{data?.page} / {totalPages}</span>
+                      <button
+                        type="button"
+                        className="page-btn"
+                        disabled={page >= totalPages}
+                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      >
+                        Siguiente →
+                      </button>
                     </div>
                   )}
                 </div>
-              )}
+              </aside>
 
-              {!qa && !qaLoading && !qaError && (
-                <div className="chat-empty">
-                  <p>
-                    {hasFilters || (data && data.total > 0)
-                      ? 'Seleccioná fuentes en el panel izquierdo y presioná «Generar preguntas y respuestas».'
-                      : 'Aplicá filtros de búsqueda: las fuentes resultantes aparecerán en el panel izquierdo.'}
+              {/* ── Panel central: biblioteca + papers relacionados ── */}
+              <div className="center-stack">
+                {/* ── Biblioteca del usuario ── */}
+                <div className="panel panel-library" aria-label="Biblioteca del usuario">
+                  <div className="panel-head">
+                    <h2>Mi biblioteca</h2>
+                    <span className="panel-count" aria-live="polite">
+                      {formatNumber(library.length)} ítem{library.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div className="sources-list">
+                    {library.length === 0 && (
+                      <div className="empty small">
+                        Todavía no tenés publicaciones en tu biblioteca. Buscá y tildá las que quieras incluir.
+                      </div>
+                    )}
+                    {library.length > 0 && (
+                      <div className="library-hint">
+                        <p>
+                          <strong>{formatNumber(library.length)}</strong> publicación{library.length === 1 ? '' : 's'} en tu biblioteca.
+                          Las preguntas se generarán a partir de estos papers.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Papers relacionados ── */}
+                <button
+                  type="button"
+                  className="btn-relate"
+                  onClick={searchRelated}
+                  disabled={relatedLoading || library.length === 0}
+                  title="Busca por embeddings los 10 papers más cercanos a tu biblioteca"
+                >
+                  {relatedLoading ? 'Buscando…' : 'Buscar papers relacionados'}
+                </button>
+
+                {related && (
+                  <div className="related-section-inline">
+                    <div className="related-head">
+                      <h3>Papers relacionados</h3>
+                      <button
+                        type="button"
+                        className="clear-btn"
+                        onClick={() => setRelated(null)}
+                        title="Cerrar resultados de relacionados"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <p className="related-sub">
+                      {related.requested > 1
+                        ? `Cercanía a ${related.requested} artículos de tu biblioteca · `
+                        : 'Cercanía al artículo de tu biblioteca · '}
+                      índice de {formatNumber(related.index_size)} papers ·{' '}
+                      {Math.round(related.took_ms / 100) / 10} s
+                    </p>
+                    <p className="related-hint">
+                      Tildá los papers que quieras incluir en tu biblioteca.
+                    </p>
+                    <div className="related-list">
+                      {related.results.map((r) => (
+                        <div
+                          key={r.id}
+                          className={`related-item${isItemInLibrary(r.id) ? ' selected' : ''}`}
+                        >
+                          <label className="related-check" title={isItemInLibrary(r.id) ? 'Quitar de biblioteca' : 'Agregar a biblioteca'}>
+                            <input
+                              type="checkbox"
+                              checked={isItemInLibrary(r.id)}
+                              onChange={() => toggleLibraryItem(r.id)}
+                              aria-label={`Incluir ${r.title}`}
+                            />
+                          </label>
+                          <div className="related-sim">
+                            <span
+                              className="related-sim-bar"
+                              style={{ width: `${Math.round(r.similarity * 100)}%` }}
+                            />
+                            <span className="related-sim-label" title="Similitud coseno en el espacio de embeddings">
+                              {Math.round(r.similarity * 100)}%
+                            </span>
+                          </div>
+                          <div className="related-body">
+                            <button
+                              type="button"
+                              className="source-title"
+                              onClick={() => openDetail(r.id)}
+                              title={r.title}
+                            >
+                              {r.title}
+                            </button>
+                            <p className="source-meta">
+                              {r.creators ? r.creators : 'Sin autores'}
+                              {r.date ? ` · ${formatDate(r.date)}` : ''}
+                              {r.open_access ? <span className="oa-badge">OA</span> : <span className="no-oa-badge">sin PDF</span>}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Tab Generación ── */}
+        {activeTab === 'generacion' && (
+          <div className="tab-panel">
+            <div className="layout">
+              {/* ── Panel central: generate bar + P&R ── */}
+              <div className="center-stack">
+                {/* ── Generate bar (config + botón) ── */}
+                <div className="generate-bar">
+                  {/* Panel de configuración de QAs */}
+                  <div className="qa-config">
+                    <button type="button" className="qa-config-toggle" onClick={() => setQaConfigOpen(!qaConfigOpen)}>
+                      <span className="qa-config-toggle-icon">{qaConfigOpen ? '▾' : '▸'}</span>
+                      <span className="qa-config-toggle-label">Configuración</span>
+                      <span className="qa-config-toggle-badges">
+                        {qaTypes.size > 0 && <span className="qa-badge qa-badge-type">{qaTypes.size} tipo{qaTypes.size > 1 ? 's' : ''}</span>}
+                        {qaAxes.size > 0 && <span className="qa-badge qa-badge-axis">{qaAxes.size} eje{qaAxes.size > 1 ? 's' : ''}</span>}
+                      </span>
+                    </button>
+                    {qaConfigOpen && (
+                      <div className="qa-config-body">
+                        <div className="qa-config-section">
+                          <span className="qa-config-label">Tipo de QA</span>
+                          <div className="qa-type-grid">
+                            {qaTypeOptions.map(t => (
+                              <label key={t.id} className={`qa-type-chip${qaTypes.has(t.id) ? ' active' : ''}`}>
+                                <input type="checkbox" checked={qaTypes.has(t.id)} onChange={() => toggleQaType(t.id)} />
+                                <span className="qa-type-icon">{t.icon}</span>
+                                <span className="qa-type-label">{t.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="qa-config-section">
+                          <span className="qa-config-label">Ejes cognitivos</span>
+                          <div className="qa-axes-grid">
+                            {qaAxesOptions.map(ax => (
+                              <label key={ax.id} className={`qa-axis-chip${qaAxes.has(ax.id) ? ' active' : ''}`} style={{ '--ax-color': ax.color } as React.CSSProperties}>
+                                <input type="checkbox" checked={qaAxes.has(ax.id)} onChange={() => toggleQaAxis(ax.id)} />
+                                <span className="qa-axis-dot" style={{ backgroundColor: ax.color }}></span>
+                                <span className="qa-axis-label">{ax.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-generate"
+                    onClick={generateQa}
+                    disabled={qaLoading || library.length === 0}
+                    title="Genera 5 preguntas y respuestas a partir de tu biblioteca"
+                  >
+                    {qaLoading ? 'Generando…' : 'Generar preguntas y respuestas'}
+                  </button>
+                  <p className="actions-hint">
+                    {library.length > 0
+                      ? `${formatNumber(library.length)} fuente${library.length === 1 ? '' : 's'} en tu biblioteca`
+                      : 'Agregá fuentes a tu biblioteca desde el tab Fuentes para habilitar la generación.'}
                   </p>
                 </div>
-              )}
 
-                </>
-              )}
+                {/* ── Centro: chat de preguntas y respuestas ── */}
+                <section className="panel panel-chat" aria-label="Preguntas y respuestas">
+                  <div className="panel-head">
+                    <h2>Preguntas y respuestas</h2>
+                    {qa && !qaLoading ? (
+                      <button type="button" className="clear-btn" onClick={() => setQa(null)}>
+                        Cerrar
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="chat-body" id="qa-section">
+                    {(
+                      <>
+                      {qaLoading && (
+                        <div className="qa-loading" role="status">
+                          <div className="qa-spinner" aria-hidden="true" />
+                          <div className="qa-loading-body">
+                            <p className="qa-loading-title">Generando preguntas y respuestas…</p>
+                            <ol className="qa-steps">
+                              {[
+                                { id: 'fulltext', label: 'Preparando textos (PDF → texto completo)' },
+                                { id: 'llm', label: 'El modelo escribe los 5 items' },
+                                { id: 'lint', label: 'Auto-auditoría del lote' },
+                              ].map((st) => {
+                                const order = ['resolving', 'fulltext', 'llm', 'lint', 'done'];
+                                const cur = qaPhase ? order.indexOf(qaPhase.phase) : -1;
+                                const stIdx = order.indexOf(st.id);
+                                const cls = stIdx < cur ? 'step-done' : stIdx === cur ? 'step-active' : 'step-todo';
+                                return (
+                                  <li key={st.id} className={`qa-step ${cls}`}>
+                                    <span className="qa-step-mark" aria-hidden="true">
+                                      {stIdx < cur ? '✓' : stIdx === cur ? '●' : '○'}
+                                    </span>
+                                    {st.label}
+                                    {stIdx === cur && qaPhase?.detail && (
+                                      <span className="qa-step-detail"> — {qaPhase.detail}</span>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                            </ol>
+                            <div className="qa-progress">
+                              <div className="qa-progress-bar" style={{ width: `${qaPhase?.pct ?? 0}%` }} />
+                            </div>
+                            <p className="qa-loading-sub">
+                              {qaPhase?.elapsed_s ? `${Math.round(qaPhase.elapsed_s)} s transcurridos` : ''}
+                              {' '}· puede tardar entre 1 y 4 minutos (más si hay que descargar PDFs nuevos).
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {qaError && (
+                        <div className="error" role="alert">
+                          <strong>No se pudieron generar las preguntas:</strong> {qaError}
+                        </div>
+                      )}
+
+                      {qa && (
+                        <div className="chat-turns">
+                          <p className="chat-note">
+                            {qa.fulltext_count ? (
+                              <>Generadas a partir del texto completo de {qa.fulltext_count} de {qa.with_abstract} artículo{qa.with_abstract === 1 ? '' : 's'} (el resto solo abstract)</>
+                            ) : (
+                              <>Generadas a partir de los resúmenes de {qa.with_abstract} artículo{qa.with_abstract === 1 ? '' : 's'} (sin texto completo disponible)</>
+                            )}
+                            {qa.requested !== qa.with_abstract ? ` (se seleccionaron ${qa.requested}, los demás no traen resumen)` : ''}{' '}
+                            — {Math.round(qa.took_ms / 100) / 10} s
+                          </p>
+                          {qa.qa.map((item) => {
+                            const flags = (qa.lint?.flags || []).filter((f) => f.n === item.n);
+                            return (
+                              <div className="chat-turn" key={item.n}>
+                                <div className={`chat-bubble question${flags.length ? ' flagged' : ''}`}>
+                                  <span className="bubble-label">
+                                    P{item.n}
+                                    {item.cultural_axis && (
+                                      <span className={`qa-axis ${AXIS_CLASS[item.cultural_axis] || ''}`}>
+                                        {AXIS_LABEL[item.cultural_axis] || item.cultural_axis}
+                                      </span>
+                                    )}
+                                  </span>
+                                  <p>{item.question}</p>
+                                </div>
+                                <div className="chat-bubble answer">
+                                  <span className="bubble-label answer-label">R{item.n}</span>
+                                  {item.options ? (
+                                    // MCQ
+                                    <div className="qa-mcq">
+                                      {item.options.map((opt: string, i: number) => (
+                                        <div key={i} className={`qa-mcq-option${opt.startsWith(item.correct) ? ' correct' : ''}`}>
+                                          {opt}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : item.scenario ? (
+                                    // Scenario
+                                    <div className="qa-scenario-block">
+                                      <p className="qa-scenario-text">{item.scenario}</p>
+                                      <p className="qa-scenario-answer">{item.answer}</p>
+                                    </div>
+                                  ) : (
+                                    // Open-ended
+                                    <p>{item.answer}</p>
+                                  )}
+                                  <QARating
+                                    value={ratings[hashKey(item.question)] || 0}
+                                    onChange={(v) => setRating(item, v)}
+                                  />
+                                  {ratings[hashKey(item.question)] > 0 && (
+                                    <textarea
+                                      className="qa-notes"
+                                      placeholder="Agregar una nota…"
+                                      value={notes[hashKey(item.question)] || ''}
+                                      onChange={(e) => saveNote(hashKey(item.question), e.target.value)}
+                                      rows={2}
+                                    />
+                                  )}
+                                  {(item.cite || item.article_ids.length > 0 || item.cultural_axis || flags.length > 0) && (
+                                    <div className="qa-collapsible qa-answer-details">
+                                      <button
+                                        type="button"
+                                        className="qa-collapsible-header"
+                                        onClick={() => setExpanded((p) => ({ ...p, [`${item.n}-details`]: !p[`${item.n}-details`] }))}
+                                        aria-expanded={!!expanded[`${item.n}-details`]}
+                                      >
+                                        <span className="qa-collapsible-icon">{expanded[`${item.n}-details`] ? '▾' : '▸'}</span>
+                                        Detalles {flags.length > 0 && <span style={{color:'var(--gold)',fontWeight:700}}>· {flags.length} flag{flags.length>1?'s':''}</span>}
+                                      </button>
+                                      {expanded[`${item.n}-details`] && (
+                                        <div className="qa-collapsible-body">
+                                          {/* Cultural Axis with tooltip */}
+                                          {item.cultural_axis && (
+                                            <div className="qa-detail-row">
+                                              <span className="qa-detail-icon" title="Dimensión de competencia cultural que evalúa este ítem">🎯</span>
+                                              <div className="qa-detail-content">
+                                                <span className="qa-detail-label">Eje cultural</span>
+                                                <span className="qa-cultural-axis">{CULTURAL_AXIS_LABELS[item.cultural_axis] || item.cultural_axis}</span>
+                                              </div>
+                                            </div>
+                                          )}
+                                          
+                                          {/* Contextual Background with tooltip */}
+                                          {item.contextual_background && (
+                                            <div className="qa-detail-row">
+                                              <span className="qa-detail-icon" title="Contexto que debe conocer el evaluador para juzgar la respuesta">📖</span>
+                                              <div className="qa-detail-content">
+                                                <span className="qa-detail-label">Contexto</span>
+                                                <p className="qa-context">{item.contextual_background}</p>
+                                              </div>
+                                            </div>
+                                          )}
+                                          
+                                          {/* Expected Response Characteristics with tooltip */}
+                                          {item.expected_response_characteristics && item.expected_response_characteristics.length > 0 && (
+                                            <div className="qa-detail-row">
+                                              <span className="qa-detail-icon" title="Características que debe tener una respuesta culturalmente competente">✅</span>
+                                              <div className="qa-detail-content">
+                                                <span className="qa-detail-label">Características esperadas</span>
+                                                <ul className="qa-expected-list">
+                                                  {item.expected_response_characteristics.map((c, i) => <li key={i}>{c}</li>)}
+                                                </ul>
+                                              </div>
+                                            </div>
+                                          )}
+                                          
+                                          {/* Common Failure Modes with tooltip */}
+                                          {item.common_failure_modes && item.common_failure_modes.length > 0 && (
+                                            <div className="qa-detail-row">
+                                              <span className="qa-detail-icon" title="Errores que revelan incompetencia cultural">⚠️</span>
+                                              <div className="qa-detail-content">
+                                                <span className="qa-detail-label">Fallas comunes</span>
+                                                <ul className="qa-failure-list">
+                                                  {item.common_failure_modes.map((f, i) => <li key={i}>{f}</li>)}
+                                                </ul>
+                                              </div>
+                                            </div>
+                                          )}
+                                          
+                                          {/* Evaluator Disagreement with tooltip */}
+                                          {item.evaluator_disagreement_note && (
+                                            <div className="qa-detail-row">
+                                              <span className="qa-detail-icon" title="Áreas donde evaluadores de distintas culturas podrían discrepar (señal de buen ítem)">💬</span>
+                                              <div className="qa-detail-content">
+                                                <span className="qa-detail-label">Posible desacuerdo</span>
+                                                <p className="qa-disagreement">{item.evaluator_disagreement_note}</p>
+                                              </div>
+                                            </div>
+                                          )}
+                                          
+                                          {/* Scoring Rubric with tooltip */}
+                                          {item.scoring_rubric && (
+                                            <div className="qa-detail-row">
+                                              <span className="qa-detail-icon" title="Rúbrica de evaluación del ítem">📊</span>
+                                              <div className="qa-detail-content">
+                                                <span className="qa-detail-label">Rúbrica</span>
+                                                <span className="qa-scoring">{SCORING_RUBRIC_LABELS[item.scoring_rubric] || item.scoring_rubric}</span>
+                                              </div>
+                                            </div>
+                                          )}
+                                          
+                                          {/* Cite with tooltip */}
+                                          {item.cite && (
+                                            <div className="qa-detail-row">
+                                              <span className="qa-detail-icon" title="Extracto literal del paper fuente (Ctrl+F verificable)">📝</span>
+                                              <div className="qa-detail-content">
+                                                <span className="qa-detail-label">Cita</span>
+                                                <p className="qa-cite">«{item.cite}»</p>
+                                              </div>
+                                            </div>
+                                          )}
+                                          
+                                          {/* Sources with tooltip */}
+                                          {item.article_ids.length > 0 && (
+                                            <div className="qa-detail-row">
+                                              <span className="qa-detail-icon" title="Papers fuente en los que se basa el ítem">📚</span>
+                                              <div className="qa-detail-content">
+                                                <span className="qa-detail-label">Basado en</span>
+                                                <p className="qa-sources">
+                                                  {item.article_ids.map((aid, idx) => {
+                                                    const src = qa.used_articles.find((a) => a.id === aid);
+                                                    const label = src ? (
+                                                      <a href="#" onClick={(e) => { e.preventDefault(); openDetail(aid); }} title={src.title}>
+                                                        {src.title.length > 60 ? src.title.slice(0, 60) + '…' : src.title}
+                                                      </a>
+                                                    ) : (
+                                                      <span>art. {aid}</span>
+                                                    );
+                                                    return (
+                                                      <span key={aid}>
+                                                        {idx > 0 && <span className="qa-sources-sep"> · </span>}
+                                                        {label}
+                                                      </span>
+                                                    );
+                                                  })}
+                                                </p>
+                                              </div>
+                                            </div>
+                                          )}
+                                          
+                                          {/* Flags */}
+                                          {flags.map((f, i) => (
+                                            <div className="qa-detail-row flag-row" key={i}>
+                                              <span className="qa-detail-icon">⚡</span>
+                                              <div className="qa-detail-content">
+                                                <span className="qa-flag">{f.detail}</span>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {qa.lint && qa.lint.flags.length > 0 && (
+                            <div className="qa-lint-note">
+                              <strong>{qa.lint.flags.length} item{qa.lint.flags.length === 1 ? '' : 's'} con flag de auto-auditoría</strong>
+                              {' — '}{qa.lint.note} (mezcla de ejes: {Object.entries(qa.lint.axis_mix).map(([a, n]) => `${AXIS_LABEL[a] || a} ${n}`).join(' · ')})
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {!qa && !qaLoading && !qaError && (
+                        <div className="chat-empty">
+                          <p>
+                            {library.length > 0
+                              ? 'Presioná «Generar preguntas y respuestas» para crear 5 ítems a partir de tu biblioteca.'
+                              : 'Agregá fuentes a tu biblioteca desde el tab Fuentes y presioná «Generar preguntas y respuestas».'}
+                          </p>
+                        </div>
+                      )}
+
+                    </>
+                    )}
+                  </div>
+                </section>
+              </div>
             </div>
-          </section>
           </div>
-        </div>
+        )}
 
         {/* ── Ficha como modal ── */}
         {detailId && (
