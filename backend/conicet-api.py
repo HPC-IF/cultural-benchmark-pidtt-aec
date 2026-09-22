@@ -2,8 +2,10 @@
 """conicet-api.py — Backend API para PIDTT-AEC (CITECCA cluster).
 Reconstruido 2026-09-14. Endpoints: /auth/*, /stats, /subjects, /search, /detail, /generate-qa, /related.
 """
-import hashlib, json, math, os, re, secrets, sqlite3, threading, time, unicodedata
+import fcntl
+import hashlib, json, math, os, re, secrets, sqlite3, subprocess, threading, time, unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 import urllib.request
@@ -13,6 +15,7 @@ import auth
 # --- Config ---
 DATA_DIR = "/mnt/shared/conicet-data"
 LIBRARY_DIR = "/mnt/shared/pidtt-aec/libraries"
+QA_STORE_DIR = "/mnt/shared/pidtt-aec/qas"
 LLM_URL = os.environ.get("LLM_URL", "http://192.168.1.68:8005/v1/chat/completions")
 LLM_MODEL = os.environ.get("LLM_MODEL", "citecca-agent")
 HOST = "0.0.0.0"
@@ -156,6 +159,37 @@ def _save_library(username, ids):
     with open(p, "w", encoding="utf-8") as f:
         json.dump(list(ids), f, ensure_ascii=False)
 
+# --- QA store (decisiones aprobar/descartar por P&R, por usuario) ---
+_qa_store_lock = threading.Lock()
+
+def _qa_store_path(username):
+    return os.path.join(QA_STORE_DIR, f"{username}.json")
+
+def _load_qa_store(username):
+    """Carga el store de P&R del usuario: { hashKey: {d, q, a, ts, article_ids} }.
+
+    Clave = hash de pregunta (djb2, mismo que el frontend). d = 'approved' | 'rejected'.
+    q/a = textos finales (posiblemente editados) para reconstruir el P&R.
+    """
+    try:
+        p = _qa_store_path(username)
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+def _save_qa_store(username, store):
+    os.makedirs(QA_STORE_DIR, exist_ok=True)
+    p = _qa_store_path(username)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(store, f, ensure_ascii=False)
+    os.replace(tmp, p)
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         print("[{}] {}".format(time.strftime("%H:%M:%S"), args[0]), flush=True)
@@ -193,6 +227,8 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
+            if u.path == "/scraping-status":
+                return _handle_scraping_status(self)
             if u.path == "/stats":
                 return self._handle_stats()
             if u.path == "/subjects":
@@ -207,6 +243,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_related_get(q)
             if u.path == "/library":
                 return self._handle_library_get(username)
+            if u.path == "/qa-store":
+                return self._handle_qa_store_get(username)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
@@ -235,6 +273,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_regenerate_item(username)
             if u.path == "/chat":
                 return self._handle_chat(username)
+            if u.path == "/qa-store":
+                return self._handle_qa_store_post(username)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
@@ -398,6 +438,64 @@ class Handler(BaseHTTPRequestHandler):
             _save_library(username, list(current_set))
             new_ids = _load_library(username)
         return self._json({"ids": new_ids, "total": len(new_ids)})
+
+    def _handle_qa_store_get(self, username):
+        """GET /qa-store — devuelve las P&R guardadas (aprobadas/descartadas) del usuario."""
+        with _qa_store_lock:
+            store = _load_qa_store(username)
+        items = []
+        for k, v in store.items():
+            if not isinstance(v, dict):
+                continue
+            items.append({"key": k, **v})
+        approved = sum(1 for i in items if i.get("d") == "approved")
+        rejected = sum(1 for i in items if i.get("d") == "rejected")
+        return self._json({"items": items, "total": len(items), "approved": approved, "rejected": rejected})
+
+    def _handle_qa_store_post(self, username):
+        """POST /qa-store — guarda la decisión de un P&R.
+        Body: {action: "approve"|"reject"|"clear", key: str, item?: {question, answer, options?, correct?, scenario?, cultural_axis, cite, article_ids}}
+        """
+        clen = int(self.headers.get("Content-Length") or 0)
+        if clen <= 0 or clen > 100000:
+            return self._json({"error": "body invalido"}, 400)
+        body = json.loads(self.rfile.read(clen).decode())
+        action = body.get("action", "")
+        key = body.get("key", "")
+        if not key or not isinstance(key, str):
+            return self._json({"error": "key requerida"}, 400)
+        if action not in ("approve", "reject", "clear"):
+            return self._json({"error": "accion invalida (approve|reject|clear)"}, 400)
+
+        with _qa_store_lock:
+            store = _load_qa_store(username)
+            if action == "clear":
+                store.pop(key, None)
+            else:
+                entry = {
+                    "d": "approved" if action == "approve" else "rejected",
+                    "ts": time.time(),
+                    "q": "",
+                    "a": "",
+                    "article_ids": [],
+                }
+                item = body.get("item")
+                if isinstance(item, dict):
+                    entry["q"] = (item.get("question") or "").strip()
+                    ans = item.get("answer")
+                    entry["a"] = ans if isinstance(ans, str) else ""
+                    entry["options"] = item.get("options") or []
+                    entry["correct"] = item.get("correct") or ""
+                    entry["scenario"] = item.get("scenario") or ""
+                    entry["cultural_axis"] = item.get("cultural_axis") or ""
+                    entry["cite"] = item.get("cite") or ""
+                    aids = item.get("article_ids")
+                    entry["article_ids"] = aids if isinstance(aids, list) else []
+                store[key] = entry
+            _save_qa_store(username, store)
+            approved = sum(1 for v in store.values() if isinstance(v, dict) and v.get("d") == "approved")
+            rejected = sum(1 for v in store.values() if isinstance(v, dict) and v.get("d") == "rejected")
+        return self._json({"ok": True, "total": len(store), "approved": approved, "rejected": rejected})
 
     def _handle_regenerate_item(self, username):
         """POST /regenerate-item — regenera una pregunta o respuesta individual.
@@ -900,6 +998,304 @@ def _qa_worker(job_id, body):
     except Exception as e:
         with QAJOBS_lock:
             QAJOBS[job_id] = {"phase": "error", "detail": str(e), "pct": 0, "elapsed_s": 0, "done": True, "error": str(e)}
+
+# --- Scraping status (dashboard /scraper/) ---
+# El dashboard llama a GET /scraping-status (proxy: /conicet/status en el
+# nginx del CT). Devuelve conteos + timeline del estado del servidor OAI
+# (verde = scrape OK, rojo = error, gris = sin actividad).
+#
+# Fuentes (sin probes nuevos al server caído):
+#  - journal del servicio conicet-crawl: [+] metadata / GetRecord OK = verde,
+#    ListIdentifiers page failed / GetRecord falló / Error = rojo.
+#  - /var/log/conicet-watchdog.log: "CONICET disponible" / "CONICET caído".
+#  - mtime de metadata.jsonl / list_token.txt (fallback de últimos eventos).
+
+_WD_LOG = "/mnt/shared/conicet-data/server_state.log"   # espejo NFS (escribe el watchdog del host)
+_WD_LOG_FALLBACK = "/var/log/conicet-watchdog.log"      # viejo, por si acaso
+_CRAWL_JLOG = "/mnt/shared/conicet-data/crawl_journal.log"  # espejo NFS del journal (host)
+_HOST_STATE = "/mnt/shared/conicet-data/host_state.json"
+_JOURNAL_CACHE = 60  # s
+_journal_cache = None
+_journal_cache_at = 0.0
+_timeline_lock = threading.Lock()
+
+_MD_TS_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:?\d{2}|Z)?)\b")
+# journalctl "Sep 22 15:01:02 proxmox ..." (mes por nombre, sin año)
+_JRNL_TS_RE = re.compile(
+    r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) "
+    r"(\d{1,2}) (\d{2}):(\d{2}):(\d{2})")
+_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
+
+
+def _iso_to_epoch(s):
+    s2 = s.strip().replace("Z", "+00:00")
+    m = _MD_TS_RE.search(s2)
+    if not m:
+        return None
+    s2 = m.group(1)
+    # +00:00 -> +0000 para fromisoformat (<3.11 no soporta colón)
+    if "+" in s2[10:] or s2[-3] == "-":
+        sign = s2[-6]
+        hh, mm = s2[-5:-3], s2[-2:]
+        s2 = s2[:10] + sign + hh + mm
+    try:
+        return datetime.fromisoformat(s2).timestamp()
+    except ValueError:
+        return None
+
+
+def _journal_line_ts(line):
+    """Timestamp de una línea journal: ISO completo o 'Sep 22 15:01:02'."""
+    e = _iso_to_epoch(line[:60])
+    if e is not None:
+        return e
+    m = _JRNL_TS_RE.match(line)
+    if not m:
+        return None
+    now = time.time()
+    year = datetime.now().year
+    try:
+        return datetime(year, _MONTHS[m.group(1)], int(m.group(2)),
+                        int(m.group(3)), int(m.group(4)), int(m.group(5))).timestamp()
+    except ValueError:
+        return None
+
+
+def _journal_events():
+    """[(epoch, kind, msg)] de las últimas 7d, kind in ok|fail|info.
+
+    Fuente primaria: espejo NFS del journal del crawl (lo escribe el
+    watchdog del host; el journal real vive en el HOST, no en el CT).
+    Fallback: journalctl local del CT (datos viejos, solo si el espejo no existe).
+    """
+    global _journal_cache, _journal_cache_at
+    now = time.time()
+    if _journal_cache is not None and now - _journal_cache_at < _JOURNAL_CACHE:
+        return _journal_cache
+    lines = []
+    try:
+        with open(_CRAWL_JLOG) as f:
+            lines = f.read().splitlines()
+    except (OSError, FileNotFoundError):
+        try:
+            p = subprocess.run(
+                ["journalctl", "-u", "conicet-crawl", "--since", "-7d",
+                 "--no-pager", "-n", "8000"],
+                capture_output=True, text=True, timeout=45)
+            lines = p.stdout.splitlines()
+        except Exception:
+            lines = []
+    events = []
+    for line in lines:
+        ts = _journal_line_ts(line)
+        if ts is None or now - ts > 7 * 86400:
+            continue
+        low = line.lower()
+        if ("listidentifiers page failed" in low or "getrecord falló" in low
+                or "getrecord fall" in low or "getrecord truncado" in low
+                or "descarga falló" in low or "reanudacion) fallo" in low
+                or "resumptiontoken invalido" in low
+                or "pool fase 1 no termino" in low):
+            kind = "fail"
+        elif ("registros escritos" in low or "pdfs descargados" in low
+                or "getrecord fallback" in low
+                or "sweep paralelo terminado" in low
+                or "metadata terminado" in low):
+            kind = "ok"
+        else:
+            kind = "info"
+        events.append((ts, kind, line[-200:]))
+    events.sort(key=lambda e: e[0])
+    # Cap: último evento por minuto (el journal puede tener miles de líneas)
+    if len(events) > 4000:
+        by_min = {}
+        for ev in events:
+            by_min[int(ev[0] // 60)] = ev  # el último gana (sort ascendente)
+        events = sorted(by_min.values(), key=lambda e: e[0])
+    _journal_cache = events
+    _journal_cache_at = now
+    return events
+
+
+def _watchdog_events():
+    """[(epoch, 'up'|'down')] del estado del servidor OAI (7d).
+
+    Fuente: server_state.log del watchdog (formato '[ts] state=up|down
+    http=N'). Fallback: log viejo '[ts] CONICET disponible/caído'.
+    """
+    events = []
+    for path in (_WD_LOG, _WD_LOG_FALLBACK):
+        try:
+            with open(path) as f:
+                for line in f:
+                    m = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (.*)", line)
+                    if not m:
+                        continue
+                    ts = _iso_to_epoch(m.group(1).replace(" ", "T"))
+                    if ts is None or time.time() - ts > 7 * 86400:
+                        continue
+                    msg = m.group(2)
+                    sm = re.match(r"state=(up|down)", msg)
+                    if sm:
+                        kind = sm.group(1)
+                    elif "disponible" in msg:
+                        kind = "up"
+                    elif "caído" in msg or "caido" in msg:
+                        kind = "down"
+                    else:
+                        continue
+                    events.append((ts, kind))
+        except (OSError, FileNotFoundError):
+            continue
+    events.sort(key=lambda e: e[0])
+    return events
+
+
+def _build_timeline(now=None):
+    """Timeline 7d, segmentos de 5 min: 0=gris(sin datos) 1=verde(OK) 2=rojo(error).
+
+    Recorrido cronológico: el estado de cada segmento = el estado conocido
+    en ese instante (último evento ≤ t). Segments ANTES del primer evento
+    del período = gris. Tras el primer evento, cada segmento pinta el estado
+    vigente (los huecos entre eventos heredan el último estado conocido —
+    no inventan actividad: la barra refleja el estado, no el throughput).
+    """
+    now = now or time.time()
+    span = 7 * 86400
+    seg_s = 300
+    n_seg = span // seg_s  # 2016
+    t0 = now - span
+
+    j_events = _journal_events()
+    w_events = _watchdog_events()
+    merged = sorted(
+        [(ts, 1) for ts, k in w_events if k == "up"]
+        + [(ts, 2) for ts, k in w_events if k == "down"]
+        + [(ts, 1) for ts, k, _ in j_events if k == "ok"]
+        + [(ts, 2) for ts, k, _ in j_events if k == "fail"],
+        key=lambda e: e[0])
+
+    # Estado inicial: último evento anterior a la ventana (si existe).
+    # Si no, usa el estado del servicio ahora (activo=verde, inactivo=gris).
+    prior = [st for ts, st in merged if ts < t0]
+    last_state = prior[-1] if prior else (1 if _crawl_active_now() else 0)
+
+    segs = [0] * n_seg
+    seg_events = {}  # idx -> state (último del segmento)
+    for ts, st in merged:
+        si = int((ts - t0) // seg_s)
+        if 0 <= si < n_seg:
+            seg_events[si] = st
+    for i in range(n_seg):
+        if i in seg_events:
+            last_state = seg_events[i]
+        segs[i] = last_state
+    return segs
+
+
+def _crawl_active_now():
+    """Estado REAL del crawler: host_state.json del watchdog (host). Fallback:
+    systemctl local del CT (donde el unit ya no vive — solo datos viejos)."""
+    try:
+        with open(_HOST_STATE) as f:
+            hs = json.load(f)
+        if time.time() - float(hs.get("ts", 0)) < 15 * 60:
+            return hs.get("crawl_active") == "active"
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    try:
+        p = subprocess.run(["systemctl", "is-active", "conicet-crawl"],
+                           capture_output=True, text=True, timeout=10)
+        return p.stdout.strip() == "active"
+    except Exception:
+        return False
+
+
+def _host_lock():
+    """Lock del crawl según host_state.json (frescura < 15 min)."""
+    try:
+        with open(_HOST_STATE) as f:
+            hs = json.load(f)
+        if time.time() - float(hs.get("ts", 0)) < 15 * 60:
+            return bool(hs.get("crawl_lock"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    return False
+
+
+def _handle_scraping_status(self):
+    now = time.time()
+    meta = _load_metadata()
+    total_items = len(meta)
+
+    pdfs = 0
+    pdir = os.path.join(DATA_DIR, "pdf")
+    try:
+        pdfs = len([f for f in os.listdir(pdir) if f.endswith(".pdf")])
+    except OSError:
+        pass
+
+    emb = 0
+    epath = os.path.join(DATA_DIR, "embeddings.jsonl")
+    try:
+        with open(epath, "rb") as f:
+            for _ in f:
+                emb += 1
+    except OSError:
+        pass
+
+    tail = 0
+    try:
+        with open(os.path.join(DATA_DIR, "tail_offset.txt")) as f:
+            tail = int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        pass
+
+    last_id = meta[-1].get("id", "") if meta else ""
+    mtime = os.path.getmtime(os.path.join(DATA_DIR, "metadata.jsonl")) if os.path.exists(os.path.join(DATA_DIR, "metadata.jsonl")) else None
+
+    crawl_active = _crawl_active_now()
+    lock_held = _host_lock()
+
+    # Timeline del estado del servidor (cache 60 s)
+    with _timeline_lock:
+        segs = _build_timeline(now)
+
+    # Últimos errores conocidos (para el timeline card)
+    j_events = _journal_events()
+    fails = [(ts, msg) for ts, k, msg in j_events if k == "fail"]
+    wd = _watchdog_events()
+    wd_down = [ts for ts, k in wd if k == "down"]
+    last_error = fails[-1][1][-160:] if fails else None
+    last_error_at = fails[-1][0] if fails else None
+    last_down_at = wd_down[-1] if wd_down else None
+
+    return self._json({
+        "ok": True,
+        "total_items": total_items,
+        "pdfs_downloaded": pdfs,
+        "embeddings": emb,
+        "tail_offset": tail,
+        "last_identifier": last_id,
+        "updated_at": datetime.fromtimestamp(mtime).isoformat() + "Z" if mtime else None,
+        "crawl_active": crawl_active,
+        "crawl_lock": lock_held,
+        "metadata_path": os.path.join(DATA_DIR, "metadata.jsonl"),
+        "scraper_dir": "/mnt/shared/conicet-scraper",
+        "timeline": {
+            "days": 7,
+            "seg_s": 300,
+            "seg": segs,
+            "ok": sum(1 for s in segs if s == 1),
+            "fail": sum(1 for s in segs if s == 2),
+            "idle": sum(1 for s in segs if s == 0),
+            "last_error": last_error,
+            "last_error_at": last_error_at,
+            "last_down_at": last_down_at,
+        },
+    })
+
 
 def main():
     auth.init_db()

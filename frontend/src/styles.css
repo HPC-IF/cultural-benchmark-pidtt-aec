@@ -2872,6 +2872,129 @@ body {
   border-color: var(--gold);
 }
 
+/* Decisiones aprobar/descartar por P&R */
+.bubble-btn.decision-approve,
+.bubble-btn.decision-reject {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.28rem 0.55rem;
+  opacity: 0.85;
+  border: 1px solid var(--line);
+  background: var(--card, #fff);
+  color: var(--ink);
+}
+
+.bubble-btn.decision-approve:hover {
+  color: #1e7e44;
+  border-color: #1e7e44;
+}
+
+.bubble-btn.decision-reject:hover {
+  color: #c0392b;
+  border-color: #c0392b;
+}
+
+.bubble-btn.decision-approve.active {
+  background: rgba(46, 160, 90, 0.14);
+  color: #1e7e44;
+  border-color: #1e7e44;
+  opacity: 1;
+}
+
+.bubble-btn.decision-reject.active {
+  background: rgba(192, 57, 43, 0.12);
+  color: #c0392b;
+  border-color: #c0392b;
+  opacity: 1;
+}
+
+.bubble-btn.decision-approve:disabled,
+.bubble-btn.decision-reject:disabled {
+  opacity: 0.4;
+  cursor: wait;
+}
+
+.qa-decision-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.qa-decision-badge.approved {
+  background: rgba(46, 160, 90, 0.14);
+  color: #1e7e44;
+  border: 1px solid rgba(46, 160, 90, 0.4);
+}
+
+.qa-decision-badge.rejected {
+  background: rgba(192, 57, 43, 0.12);
+  color: #c0392b;
+  border: 1px solid rgba(192, 57, 43, 0.4);
+}
+
+/* Panel de P&R guardadas del usuario */
+.panel-saved {
+  margin-bottom: 0.9rem;
+}
+
+.saved-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: 24rem;
+  overflow-y: auto;
+  padding: 0.2rem 0.2rem 0.4rem;
+}
+
+.saved-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  background: var(--card, #fff);
+  font-size: 0.85rem;
+}
+
+.saved-item.approved {
+  border-left: 3px solid #2ea05a;
+}
+
+.saved-item.rejected {
+  border-left: 3px solid #c0392b;
+}
+
+.saved-item-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.saved-question {
+  margin: 0 0 0.3rem;
+  font-weight: 500;
+}
+
+.saved-answer {
+  margin: 0 0 0.3rem;
+  color: var(--ink-soft, var(--ink-muted));
+}
+
+.saved-date {
+  margin: 0;
+  font-size: 0.68rem;
+  color: var(--ink-muted);
+}
+
+.qa-mcq.compact {
+  font-size: 0.8rem;
+}
+
 /* ========================================
    Bubble edit (inline textarea + save/cancel)
    ======================================== */

@@ -509,6 +509,7 @@ function App() {
             qa: prev.qa.map(q => q.n === n ? { ...q, question: d.data.question } : q),
           };
         });
+        clearDecisionFor(n); // pregunta nueva → decisión anterior no aplica
       }
     } catch (e) {
       console.error('Regenerate question error:', e);
@@ -554,6 +555,7 @@ function App() {
             }),
           };
         });
+        clearDecisionFor(n); // respuesta nueva → decisión anterior no aplica
       }
     } catch (e) {
       console.error('Regenerate answer error:', e);
@@ -573,8 +575,14 @@ function App() {
     setEditingAnswer(null);
   };
 
-  // Actualizar pregunta en estado local
+  // Actualizar pregunta en estado local (si cambia el texto, la decisión ya no aplica)
   const updateQuestion = (n: number, text: string) => {
+    const item = qa?.qa.find((q) => q.n === n);
+    if (!item) return;
+    const key = hashKey(item.question);
+    if (item.question !== text && qaDecisions[key] && qaDecisionQ[key] === item.question) {
+      clearDecisionLocal(key);
+    }
     setQa(prev => {
       if (!prev) return prev;
       return {
@@ -584,8 +592,14 @@ function App() {
     });
   };
 
-  // Actualizar respuesta en estado local
+  // Actualizar respuesta en estado local (si cambia el texto, la decisión ya no aplica)
   const updateAnswer = (n: number, text: string) => {
+    const item = qa?.qa.find((q) => q.n === n);
+    if (!item) return;
+    const key = hashKey(item.question);
+    if ((item.answer || '') !== text && qaDecisions[key]) {
+      clearDecisionLocal(key);
+    }
     setQa(prev => {
       if (!prev) return prev;
       return {
@@ -715,6 +729,151 @@ function App() {
     });
   };
 
+  // Decisiones aprobar/descartar por P&R, por usuario (sincronizadas con el
+  // backend: /qa-store). Clave = hash de la pregunta (djb2).
+  const [qaDecisions, setQaDecisions] = useState<Record<string, 'approved' | 'rejected'>>({});
+  // Pregunta tal como se guardó en el store (para saber si un edit la invalida).
+  const [qaDecisionQ, setQaDecisionQ] = useState<Record<string, string>>({});
+  const [qaDecisionBusy, setQaDecisionBusy] = useState<string | null>(null);
+  // P&R guardadas del usuario (aprobadas y descartadas), para el panel "Guardadas".
+  const [qaSaved, setQaSaved] = useState<{ key: string; d: 'approved' | 'rejected'; q: string; a: string; options?: string[]; correct?: string; scenario?: string; cultural_axis?: string; cite?: string; article_ids?: string[]; ts?: number }[]>([]);
+
+  const loadQaStore = async () => {
+    if (!authUser) { setQaDecisions({}); setQaDecisionQ({}); setQaSaved([]); return; }
+    try {
+      const r = await apiFetch('/qa-store');
+      const d = await r.json();
+      if (r.ok) {
+        const m: Record<string, 'approved' | 'rejected'> = {};
+        const qm: Record<string, string> = {};
+        const items = d.items || [];
+        for (const it of items) {
+          if (it.d === 'approved' || it.d === 'rejected') {
+            m[it.key] = it.d;
+            qm[it.key] = it.q || '';
+          }
+        }
+        setQaDecisions(m);
+        setQaDecisionQ(qm);
+        setQaSaved(items);
+      }
+    } catch { setQaDecisions({}); setQaDecisionQ({}); setQaSaved([]); }
+  };
+
+  const clearDecisionLocal = async (key: string) => {
+    setQaDecisions((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setQaDecisionQ((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    await apiFetch('/qa-store', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clear', key }),
+    }).catch(() => { /* ignore */ });
+    refreshQaSaved();
+  };
+
+  const setDecision = async (n: number, decision: 'approved' | 'rejected') => {
+    if (!qa || !authUser) return;
+    const item = qa.qa.find((q) => q.n === n);
+    if (!item) return;
+    await setDecisionByKey(hashKey(item.question), decision, {
+      question: item.question,
+      answer: item.answer || '',
+      options: item.options || [],
+      correct: item.correct || '',
+      scenario: item.scenario || '',
+      cultural_axis: item.cultural_axis || '',
+      cite: item.cite || '',
+      article_ids: item.article_ids || [],
+    });
+  };
+
+  // Si la pregunta se edita o regenera, la clave cambia y la decisión anterior
+  // deja de aplicar: se borra del store del usuario.
+  const clearDecisionFor = (n: number) => {
+    if (!qa) return;
+    const item = qa.qa.find((q) => q.n === n);
+    if (!item) return;
+    const key = hashKey(item.question);
+    if (qaDecisions[key]) clearDecisionLocal(key);
+  };
+
+  // P&R guardadas del usuario (aprobadas y descartadas), para el panel
+  // "Guardadas" de la pestaña Generación.
+  const refreshQaSaved = async () => {
+    if (!authUser) { setQaSaved([]); return; }
+    try {
+      const r = await apiFetch('/qa-store');
+      const d = await r.json();
+      if (r.ok) {
+        setQaSaved((d.items || []).filter((it: { d: string }) => it.d === 'approved' || it.d === 'rejected'));
+      }
+    } catch { setQaSaved([]); }
+  };
+
+  const setDecisionByKey = async (
+    key: string,
+    decision: 'approved' | 'rejected',
+    item: { question: string; answer: string; options?: string[]; correct?: string; scenario?: string; cultural_axis?: string; cite?: string; article_ids?: string[] },
+  ) => {
+    if (!authUser) return;
+    const current = qaDecisions[key];
+    const action: 'approve' | 'reject' | 'clear' =
+      current === decision ? 'clear' : decision === 'approved' ? 'approve' : 'reject';
+    if (action === 'clear') {
+      clearDecisionLocal(key);
+      refreshQaSaved();
+      return;
+    }
+    setQaDecisionBusy(key);
+    setQaDecisions((prev) => ({ ...prev, [key]: decision }));
+    setQaDecisionQ((prev) => ({ ...prev, [key]: item.question }));
+    try {
+      const r = await apiFetch('/qa-store', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, key, item }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setQaDecisions((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        setQaDecisionQ((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        alert(d.error || 'Error al guardar la decisión');
+      }
+    } catch {
+      setQaDecisions((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setQaDecisionQ((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } finally {
+      setQaDecisionBusy(null);
+      refreshQaSaved();
+    }
+  };
+
   // Colapsables por item (R esperada, Rechazar, Ambigüedad). Clave = `${item.n}-${tipo}`.
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // Notas libres por P&R. Clave = hash de la pregunta. Persistida en localStorage.
@@ -760,6 +919,7 @@ function App() {
 
   useEffect(() => {
     loadLibrary();
+    loadQaStore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser]);
 
@@ -1540,6 +1700,78 @@ function App() {
 
               {/* ── Panel central: QAs ── */}
               <div className="center-stack">
+                {/* ── P&R guardadas del usuario ── */}
+                {qaSaved.length > 0 && (
+                  <section className="panel panel-saved" aria-label="Preguntas y respuestas guardadas">
+                    <div className="panel-head">
+                      <h2>Guardadas ({qaSaved.length})</h2>
+                      <span className="panel-count">
+                        {qaSaved.filter((s) => s.d === 'approved').length} ✓ · {qaSaved.filter((s) => s.d === 'rejected').length} ✕
+                      </span>
+                    </div>
+                    <div className="saved-list">
+                      {qaSaved.map((s) => (
+                        <div key={s.key} className={`saved-item ${s.d}`}>
+                          <div className="saved-item-head">
+                            <span className={`qa-decision-badge ${s.d}`}>
+                              {s.d === 'approved' ? '✓ Aprobada' : '✕ Descartada'}
+                            </span>
+                            {s.cultural_axis && (
+                              <span className="qa-type-badge">{s.cultural_axis}</span>
+                            )}
+                            <div className="bubble-actions">
+                              <button
+                                type="button"
+                                className={`bubble-btn decision-approve${s.d === 'approved' ? ' active' : ''}`}
+                                onClick={() => setDecisionByKey(s.key, 'approved', {
+                                  question: s.q, answer: s.a, options: s.options, correct: s.correct,
+                                  scenario: s.scenario, cultural_axis: s.cultural_axis, cite: s.cite, article_ids: s.article_ids,
+                                })}
+                                disabled={qaDecisionBusy === s.key}
+                                title={s.d === 'approved' ? 'Aprobada — clic para desmarcar' : 'Aprobar y guardar esta P&R'}
+                              >
+                                ✓ Aprobar
+                              </button>
+                              <button
+                                type="button"
+                                className={`bubble-btn decision-reject${s.d === 'rejected' ? ' active' : ''}`}
+                                onClick={() => setDecisionByKey(s.key, 'rejected', {
+                                  question: s.q, answer: s.a, options: s.options, correct: s.correct,
+                                  scenario: s.scenario, cultural_axis: s.cultural_axis, cite: s.cite, article_ids: s.article_ids,
+                                })}
+                                disabled={qaDecisionBusy === s.key}
+                                title={s.d === 'rejected' ? 'Descartada — clic para desmarcar' : 'Descartar esta P&R'}
+                              >
+                                ✕ Descartar
+                              </button>
+                            </div>
+                          </div>
+                          <p className="saved-question">{s.q}</p>
+                          {s.options && s.options.length > 0 ? (
+                            <div className="qa-mcq compact">
+                              {s.options.map((opt: string, i: number) => (
+                                <div key={i} className={`qa-mcq-option${opt.startsWith(s.correct || '') ? ' correct' : ''}`}>
+                                  {opt}
+                                </div>
+                              ))}
+                            </div>
+                          ) : s.scenario ? (
+                            <div className="qa-scenario-block">
+                              <p className="qa-scenario-text">{s.scenario}</p>
+                              <p className="qa-scenario-answer">{s.a}</p>
+                            </div>
+                          ) : (
+                            <p className="saved-answer">{s.a}</p>
+                          )}
+                          <p className="saved-date">
+                            {s.ts ? new Date(s.ts * 1000).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' }) : ''}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
                 {/* ── Filtros de QAs ── */}
                 {filteredQa && filteredQa.qa.length > 0 && (
                   <div className="qa-filters">
@@ -1648,12 +1880,18 @@ function App() {
                         {filteredQa.qa.map((item) => {
                           const flags = (filteredQa.lint?.flags || []).filter((f) => f.n === item.n);
                           const itemType = item.options ? 'mcq' : item.scenario ? 'scenario' : 'open-ended';
+                          const decision = qaDecisions[hashKey(item.question)];
                           return (
                             <div className="chat-turn" key={item.n}>
                               <div className={`chat-bubble question${flags.length ? ' flagged' : ''}`}>
                                 <div className="bubble-header">
                                   <span className="bubble-label">
                                     P{item.n}
+                                    {decision && (
+                                      <span className={`qa-decision-badge ${decision}`}>
+                                        {decision === 'approved' ? '✓ Aprobada' : '✕ Descartada'}
+                                      </span>
+                                    )}
                                     {item.cultural_axis && (
                                       <span className={`qa-axis-badge ${AXIS_CLASS[item.cultural_axis] || ''}`}>
                                         {AXIS_LABEL[item.cultural_axis] || item.cultural_axis}
@@ -1740,6 +1978,24 @@ function App() {
                                 <div className="bubble-header">
                                   <span className="bubble-label answer-label">R{item.n}</span>
                                   <div className="bubble-actions">
+                                    <button
+                                      type="button"
+                                      className={`bubble-btn decision-approve${decision === 'approved' ? ' active' : ''}`}
+                                      onClick={() => setDecision(item.n, 'approved')}
+                                      disabled={qaDecisionBusy === hashKey(item.question)}
+                                      title={decision === 'approved' ? 'Aprobada — clic para desmarcar' : 'Aprobar y guardar esta P&R'}
+                                    >
+                                      ✓ Aprobar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`bubble-btn decision-reject${decision === 'rejected' ? ' active' : ''}`}
+                                      onClick={() => setDecision(item.n, 'rejected')}
+                                      disabled={qaDecisionBusy === hashKey(item.question)}
+                                      title={decision === 'rejected' ? 'Descartada — clic para desmarcar' : 'Descartar esta P&R'}
+                                    >
+                                      ✕ Descartar
+                                    </button>
                                     <button
                                       type="button"
                                       className="bubble-btn edit"
