@@ -30,26 +30,13 @@ pidtt-aec/
 │   └── runs/          # Resultados de corridas anteriores
 │
 ├── deploy/            # Infraestructura de despliegue
-│   ├── deploy.sh      # Deploy a contenedores LXC (CT 3101 frontend, CT 9004 backend)
+│   ├── deploy.sh      # Deploy a contenedores LXC (frontend + backend)
 │   ├── setup-lxc.sh   # Creación y configuración de contenedores
 │   ├── .env.example   # Template de variables de entorno
 │   └── .github/       # CI/CD workflows
 │
 └── .github/workflows/ # CI para frontend (lint, test, build)
 ```
-
----
-
-## Despliegue actual (Producción)
-
-| Servidor | Contenedor | Servicio | Puerto |
-|----------|-----------|----------|--------|
-| Host Proxmox (fuego) | CT 3101 (pidtt-aec) | Frontend React/Vite + Nginx | 80/443 |
-| Host Proxmox (fuego) | CT 9004 (conicet) | Backend API Python | 8900 |
-| Host Proxmox (fuego) | CT 9004 (conicet) | conicet-embed.service | interno |
-| Host Proxmox (fuego) | CT 9004 (conicet) | conicet-crawl.service | interno |
-| Gateway (nginx CT 8001) | — | /pidtt-aec → CT 3101 | 443 |
-| Gateway (nginx CT 8001) | — | /conicet/api/bench → CT 9004 | 443 |
 
 ---
 
