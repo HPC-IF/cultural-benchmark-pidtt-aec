@@ -1578,7 +1578,7 @@ function App() {
                                       onClick={() => setEditingQuestion(editingQuestion === item.n ? null : item.n)}
                                       title="Editar pregunta"
                                     >
-                                      ✏️
+                                      ✎
                                     </button>
                                     <button
                                       type="button"
@@ -1586,7 +1586,7 @@ function App() {
                                       onClick={() => setRegeneratingQuestion(regeneratingQuestion === item.n ? null : item.n)}
                                       title="Regenerar pregunta"
                                     >
-                                      🔄
+                                      ⟳
                                     </button>
                                   </div>
                                 </div>
@@ -1651,7 +1651,7 @@ function App() {
                                       onClick={() => setEditingAnswer(editingAnswer === item.n ? null : item.n)}
                                       title="Editar respuesta"
                                     >
-                                      ✏️
+                                      ✎
                                     </button>
                                     <button
                                       type="button"
@@ -1659,7 +1659,7 @@ function App() {
                                       onClick={() => setRegeneratingAnswer(regeneratingAnswer === item.n ? null : item.n)}
                                       title="Regenerar respuesta"
                                     >
-                                      🔄
+                                      ⟳
                                     </button>
                                   </div>
                                 </div>
