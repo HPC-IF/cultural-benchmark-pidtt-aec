@@ -16,6 +16,7 @@ import auth
 DATA_DIR = "/mnt/shared/conicet-data"
 LIBRARY_DIR = "/mnt/shared/pidtt-aec/libraries"
 QA_STORE_DIR = "/mnt/shared/pidtt-aec/qas"
+BATCH_DIR = "/mnt/shared/pidtt-aec/batches"
 LLM_URL = os.environ.get("LLM_URL", "http://192.168.1.68:8005/v1/chat/completions")
 LLM_MODEL = os.environ.get("LLM_MODEL", "citecca-agent")
 HOST = "0.0.0.0"
@@ -190,6 +191,32 @@ def _save_qa_store(username, store):
         json.dump(store, f, ensure_ascii=False)
     os.replace(tmp, p)
 
+# --- QA batch (último lote generado, por usuario; para retomar curación) ---
+_batch_lock = threading.Lock()
+
+def _batch_path(username):
+    return os.path.join(BATCH_DIR, f"{username}.json")
+
+def _load_batch(username):
+    try:
+        p = _batch_path(username)
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return None
+
+def _save_batch(username, batch):
+    os.makedirs(BATCH_DIR, exist_ok=True)
+    p = _batch_path(username)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(batch, f, ensure_ascii=False)
+    os.replace(tmp, p)
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         print("[{}] {}".format(time.strftime("%H:%M:%S"), args[0]), flush=True)
@@ -245,6 +272,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_library_get(username)
             if u.path == "/qa-store":
                 return self._handle_qa_store_get(username)
+            if u.path == "/qa-batch":
+                return self._handle_qa_batch_get(username)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
@@ -275,6 +304,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_chat(username)
             if u.path == "/qa-store":
                 return self._handle_qa_store_post(username)
+            if u.path == "/qa-batch":
+                return self._handle_qa_batch_post(username)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
@@ -380,7 +411,8 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(clen).decode())
 
         # Si {library: true}, usar biblioteca del usuario como fuentes
-        if body.get("library") and username:
+        # (solo si el frontend no pasó un subconjunto explícito en ids)
+        if body.get("library") and username and not (isinstance(body.get("ids"), list) and body.get("ids")):
             with _library_lock:
                 lib_ids = _load_library(username)
             if not lib_ids:
@@ -391,9 +423,9 @@ class Handler(BaseHTTPRequestHandler):
         job_id = secrets.token_hex(16)
         now = time.time()
         with QAJOBS_lock:
-            QAJOBS[job_id] = {"phase": "resolving", "detail": "Preparando...", "pct": 0, "elapsed_s": 0, "done": False}
+            QAJOBS[job_id] = {"phase": "resolving", "detail": "Preparando...", "pct": 0, "elapsed_s": 0, "done": False, "used_articles": [], "item_total": 0}
 
-        t = threading.Thread(target=_qa_worker, args=(job_id, body), daemon=True)
+        t = threading.Thread(target=_qa_worker, args=(job_id, body, username), daemon=True)
         t.start()
         return self._json({"job_id": job_id})
 
@@ -496,6 +528,33 @@ class Handler(BaseHTTPRequestHandler):
             approved = sum(1 for v in store.values() if isinstance(v, dict) and v.get("d") == "approved")
             rejected = sum(1 for v in store.values() if isinstance(v, dict) and v.get("d") == "rejected")
         return self._json({"ok": True, "total": len(store), "approved": approved, "rejected": rejected})
+
+    def _handle_qa_batch_get(self, username):
+        """GET /qa-batch — último lote generado del usuario (para retomar curación)."""
+        with _batch_lock:
+            batch = _load_batch(username)
+        if not batch:
+            return self._json({"batch": None})
+        return self._json({"batch": batch})
+
+    def _handle_qa_batch_post(self, username):
+        """POST /qa-batch — guarda el último lote del usuario.
+        Body: {result: {qa, used_articles, requested, with_abstract, fulltext_count, took_ms, lint}}
+        """
+        clen = int(self.headers.get("Content-Length") or 0)
+        if clen <= 0 or clen > 500000:
+            return self._json({"error": "body invalido"}, 400)
+        body = json.loads(self.rfile.read(clen).decode())
+        result = body.get("result")
+        if not isinstance(result, dict) or not isinstance(result.get("qa"), list):
+            return self._json({"error": "result.qa requerido"}, 400)
+        batch = {
+            "ts": time.time(),
+            "result": result,
+        }
+        with _batch_lock:
+            _save_batch(username, batch)
+        return self._json({"ok": True})
 
     def _handle_regenerate_item(self, username):
         """POST /regenerate-item — regenera una pregunta o respuesta individual.
@@ -670,16 +729,34 @@ class Handler(BaseHTTPRequestHandler):
             "took_ms": 0,
         })
 
-def _qa_worker(job_id, body):
-    try:
+def _qa_worker(job_id, body, username=None):
+    def _set(phase=None, detail=None, pct=None, extra=None):
         with QAJOBS_lock:
-            QAJOBS[job_id]["phase"] = "resolving"
-            QAJOBS[job_id]["detail"] = "Preparando la generación..."
-            QAJOBS[job_id]["pct"] = 1
+            job = QAJOBS.get(job_id)
+            if not job:
+                return
+            if phase is not None:
+                job["phase"] = phase
+            if detail is not None:
+                job["detail"] = detail
+            if pct is not None:
+                job["pct"] = pct
+            if extra:
+                job.update(extra)
+    try:
+        _set(phase="resolving", detail="Preparando la generación...", pct=1)
 
         ids = body.get("ids", [])
         filters = body.get("filters", {})
         get_all = body.get("all", False)
+
+        # Cantidad de ítems (frontend: 3/5/8; default 5)
+        count = body.get("count", 5)
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            count = 5
+        count = max(1, min(count, 12))
         
         # Opciones de configuración del frontend
         requested_axes = body.get("axes", [])
@@ -750,10 +827,12 @@ def _qa_worker(job_id, body):
             QAJOBS[job_id]["phase"] = "llm"
             QAJOBS[job_id]["detail"] = "Generando preguntas para {} artículos...".format(len(articles))
             QAJOBS[job_id]["pct"] = 10
+            QAJOBS[job_id]["used_articles"] = [{"id": a["id"], "title": a.get("title", "")[:120]} for a in articles]
+            QAJOBS[job_id]["item_total"] = count
 
         # Build prompt — v17: context-aware, paper-grounded scenarios
         prompt_parts = []
-        prompt_parts.append("Creá 5 preguntas de benchmark cultural.")
+        prompt_parts.append("Creá {} preguntas de benchmark cultural.".format(count))
         prompt_parts.append("")
         prompt_parts.append(f"TIPO SOLICITADO: {', '.join(requested_qa_types)}")
         prompt_parts.append("")
@@ -782,25 +861,16 @@ def _qa_worker(job_id, body):
                 prompt_parts.append("Cada item DEBE tener 'question' y 'answer'.")
                 prompt_parts.append("NO incluir 'options', 'correct' ni 'scenario' en items OPEN-ENDED.")
         else:
-            # Múltiples tipos: distribuirlos entre los 5 ítems
-            prompt_parts.append("FORMATOS MIXTOS — DISTRIBUÍ LOS TIPOS ENTRE LOS 5 ÍTEMS:")
-            for i, t in enumerate(requested_qa_types):
+            # Múltiples tipos: distribuirlos entre los ítems
+            prompt_parts.append("FORMATOS MIXTOS — DISTRIBUÍ LOS TIPOS ENTRE LOS {} ÍTEMS:".format(count))
+            for i in range(count):
+                t = requested_qa_types[i % len(requested_qa_types)]
                 if t == "mcq":
                     prompt_parts.append(f"Ítem {i+1}: MCQ → {{\"question\":\"Q\",\"options\":[\"A) ...\",\"B) ...\",\"C) ...\",\"D) ...\"],\"correct\":\"B\"}}")
                 elif t == "scenario":
                     prompt_parts.append(f"Ítem {i+1}: SCENARIO → {{\"scenario\":\"Contexto...\",\"question\":\"Q\",\"answer\":\"R\"}}")
                 else:
                     prompt_parts.append(f"Ítem {i+1}: OPEN-ENDED → {{\"question\":\"Q\",\"answer\":\"R\"}}")
-            if len(requested_qa_types) < 5:
-                # Repetir el ciclo para completar 5 ítems
-                for i in range(len(requested_qa_types), 5):
-                    t = requested_qa_types[i % len(requested_qa_types)]
-                    if t == "mcq":
-                        prompt_parts.append(f"Ítem {i+1}: MCQ → {{\"question\":\"Q\",\"options\":[\"A) ...\",\"B) ...\",\"C) ...\",\"D) ...\"],\"correct\":\"B\"}}")
-                    elif t == "scenario":
-                        prompt_parts.append(f"Ítem {i+1}: SCENARIO → {{\"scenario\":\"Contexto...\",\"question\":\"Q\",\"answer\":\"R\"}}")
-                    else:
-                        prompt_parts.append(f"Ítem {i+1}: OPEN-ENDED → {{\"question\":\"Q\",\"answer\":\"R\"}}")
             prompt_parts.append("")
             prompt_parts.append("Cada item DEBE tener SOLO los campos de su formato (no mezclar).")
 
@@ -839,7 +909,7 @@ def _qa_worker(job_id, body):
 
         with QAJOBS_lock:
             QAJOBS[job_id]["pct"] = 20
-            QAJOBS[job_id]["detail"] = "Enviando al modelo..."
+            QAJOBS[job_id]["detail"] = "Enviando al modelo ({} ítems)…".format(count)
 
         # Call LLM
         payload = {
@@ -993,7 +1063,14 @@ def _qa_worker(job_id, body):
         }
 
         with QAJOBS_lock:
-            QAJOBS[job_id] = {"phase": "done", "detail": "Completado", "pct": 100, "elapsed_s": 0, "done": True, "result": result}
+            QAJOBS[job_id] = {"phase": "done", "detail": "Completado", "pct": 100, "elapsed_s": 0, "done": True, "result": result, "used_articles": QAJOBS.get(job_id, {}).get("used_articles", []), "item_total": count}
+
+        # Persistir el último lote del usuario para retomar la curación
+        if username:
+            try:
+                _save_batch(username, {"ts": time.time(), "result": result})
+            except Exception as e:
+                print(f"[QA] no se pudo guardar el batch: {e}")
 
     except Exception as e:
         with QAJOBS_lock:

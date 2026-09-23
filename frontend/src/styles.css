@@ -2619,6 +2619,28 @@ body {
   max-width: 120px;
 }
 
+/* Subconjunto de fuentes para el lote (marcadas) */
+.source-tag.marked {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-deep);
+}
+.source-tag-check {
+  width: 0.9rem;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--brand-deep);
+  font-weight: 700;
+}
+.source-tag {
+  cursor: pointer;
+}
+.sources-hint {
+  margin: 0 0 0.4rem;
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+}
+
 .source-tag-remove {
   background: none;
   border: none;
@@ -3575,6 +3597,12 @@ body {
   font-weight: 800;
   color: var(--ink);
 }
+.pw-hint {
+  margin: -0.5rem 0 0;
+  font-size: 0.75rem;
+  color: var(--header-sub);
+  line-height: 1.4;
+}
 .login-input {
   width: 100%;
   font-size: 0.95rem;
@@ -3610,6 +3638,93 @@ body {
 .logout-btn:hover {
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.5);
+}
+.bug-btn {
+  background: rgba(255, 170, 60, 0.15);
+  border: 1px solid rgba(255, 170, 60, 0.5);
+  border-radius: 6px;
+  padding: 0.15rem 0.55rem;
+  color: var(--header-text);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.bug-btn:hover {
+  background: rgba(255, 170, 60, 0.3);
+  border-color: rgba(255, 170, 60, 0.8);
+}
+
+/* Modal "Avisar bug" */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 15, 20, 0.6);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+.bug-modal {
+  background: var(--panel, #ffffff);
+  color: var(--ink, #1a1a1a);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  width: min(560px, 92vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 1.5rem 1.75rem;
+  position: relative;
+}
+.bug-modal h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+.bug-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: transparent;
+  border: none;
+  font-size: 1rem;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  padding: 0.25rem 0.5rem;
+}
+.bug-close:hover { opacity: 1; }
+.bug-hint {
+  margin: 0 0 1rem;
+  font-size: 0.82rem;
+  color: var(--header-sub, #666);
+  line-height: 1.5;
+}
+.bug-form { display: flex; flex-direction: column; gap: 0.75rem; }
+.bug-textarea {
+  width: 100%;
+  font-size: 0.92rem;
+  padding: 0.6rem 0.8rem;
+  resize: vertical;
+  min-height: 120px;
+  font-family: inherit;
+}
+.bug-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+.bug-success {
+  padding: 0.75rem 0;
+  font-size: 0.95rem;
+}
+.bug-success-actions {
+  margin-top: 0.75rem;
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* Dark mode login */
@@ -3658,4 +3773,258 @@ body {
   .chat-body {
     max-height: none;
   }
+}
+
+/* ══════════════════════════════════════════════════
+   v0.5: mejoras UX tab Generación
+   ══════════════════════════════════════════════════ */
+
+/* ── Segmentado Lote actual | Mis guardadas ── */
+.qa-view-tabs {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.qa-view-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink-soft);
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.qa-view-tab:hover { border-color: var(--brand); }
+.qa-view-tab.active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+/* ── Barra de progreso de curación ── */
+.qa-curation-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.85rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-size: 0.78rem;
+}
+.qa-curation-label {
+  font-weight: 700;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+}
+.qa-curation-pct {
+  font-weight: 700;
+  color: var(--ink);
+}
+.qa-curation-track {
+  display: flex;
+  width: 110px;
+  height: 8px;
+  background: var(--surface);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.qa-curation-fill {
+  height: 100%;
+}
+.qa-curation-fill.approved { background: var(--ok, #4a9d5f); }
+.qa-curation-fill.rejected { background: var(--danger, #d9534f); }
+.qa-curation-counts { color: var(--ink-muted); }
+.qa-curation-sep { color: var(--line-strong, #c9bfa8); }
+
+/* ── Banner de lote restaurado ── */
+.qa-restored-banner {
+  padding: 0.6rem 0.85rem;
+  background: var(--brand-soft);
+  border: 1px solid var(--brand);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  color: var(--brand-deep);
+}
+
+/* ── Ayuda de configuración ── */
+.panel-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.panel-help-btn {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong, #c9bfa8);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+}
+.panel-help-btn:hover { border-color: var(--brand); color: var(--brand-deep); }
+.panel-head-link {
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--brand);
+  cursor: pointer;
+}
+.panel-head-link:hover { text-decoration: underline; }
+.qa-help {
+  padding: 0.6rem 0.85rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  font-size: 0.74rem;
+  color: var(--ink-soft);
+}
+.qa-help-title {
+  margin: 0.4rem 0 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-muted);
+}
+.qa-help-title:first-child { margin-top: 0; }
+.qa-help-list {
+  margin: 0 0 0.4rem;
+  padding-left: 0.9rem;
+}
+.qa-help-list li { margin-bottom: 0.25rem; }
+.qa-help-list .qa-axis-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  margin-right: 0.2rem;
+  vertical-align: baseline;
+}
+.qa-help-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+}
+
+/* ── Selector de cantidad de ítems ── */
+.qa-count-row {
+  display: flex;
+  gap: 0.35rem;
+}
+.qa-count-btn {
+  flex: 1;
+  padding: 0.35rem 0;
+  border: 1px solid var(--line-strong, #c9bfa8);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink-soft);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.qa-count-btn:hover { border-color: var(--brand); }
+.qa-count-btn.active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+/* ── Spinner con contexto ── */
+.qa-loading-papers {
+  margin: 0 0 0.5rem;
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Decisión destacada al final de cada par ── */
+.qa-decision-block {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong, #c9bfa8);
+  border-radius: 8px;
+}
+.qa-decision-block.has-approved { border-left-color: var(--ok, #4a9d5f); background: #eef7ef; }
+.qa-decision-block.has-rejected { border-left-color: var(--danger, #d9534f); background: #fbeeee; }
+.qa-decision-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.qa-decision-block.has-approved .qa-decision-label { color: var(--ok, #2f7a45); }
+.qa-decision-block.has-rejected .qa-decision-label { color: var(--danger, #a83232); }
+.qa-decision-btns {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+.qa-decision-btn {
+  padding: 0.35rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong, #c9bfa8);
+  background: var(--card);
+  color: var(--ink-soft);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.qa-decision-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.qa-decision-btn.approve:hover { border-color: var(--ok, #4a9d5f); color: var(--ok, #2f7a45); }
+.qa-decision-btn.reject:hover { border-color: var(--danger, #d9534f); color: var(--danger, #a83232); }
+.qa-decision-btn.approve.active {
+  background: var(--ok, #4a9d5f);
+  border-color: var(--ok, #4a9d5f);
+  color: #fff;
+}
+.qa-decision-btn.reject.active {
+  background: var(--danger, #d9534f);
+  border-color: var(--danger, #d9534f);
+  color: #fff;
+}
+.qa-rating-toggle {
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qa-rating-toggle:hover { color: var(--brand); }
+
+/* ── Burbuja de respuesta con decisión ── */
+.chat-bubble.answer.decided-approved {
+  border-left: 3px solid var(--ok, #4a9d5f);
+}
+.chat-bubble.answer.decided-rejected {
+  border-left: 3px solid var(--danger, #d9534f);
 }

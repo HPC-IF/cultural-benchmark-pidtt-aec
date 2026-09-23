@@ -70,6 +70,8 @@ interface QAJobState {
   detail: string;
   pct: number;
   elapsed_s: number;
+  used_articles?: { id: string; title: string }[];
+  item_total?: number;
 }
 
 interface QALintFlag {
@@ -156,7 +158,7 @@ const API_BASE = '/api/conicet';
 const TOKEN_KEY = 'pidtt-aec-token';
 const USER_KEY = 'pidtt-aec-user';
 
-type AuthUser = { token: string; username: string; display_name: string };
+type AuthUser = { token: string; username: string; display_name: string; must_change?: boolean };
 
 function getAuth(): AuthUser | null {
   try {
@@ -395,7 +397,9 @@ function App() {
   useEffect(() => {
     const a = getAuth();
     if (a) {
-      apiFetch('/auth/me').then(r => r.ok ? r.json() : Promise.reject()).then(() => setAuthUser(a)).catch(() => { clearAuth(); setAuthUser(null); });
+      apiFetch('/auth/me').then(r => r.ok ? r.json() : Promise.reject())
+        .then(d => { const u = { ...a, must_change: !!d.must_change }; setAuth(u); setAuthUser(u); })
+        .catch(() => { clearAuth(); setAuthUser(null); });
     }
   }, []);
 
@@ -406,7 +410,7 @@ function App() {
       const r = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify({ username: loginUser, password: loginPass }) });
       if (!r.ok) throw new Error('Credenciales inválidas');
       const data = await r.json();
-      const u = { token: data.token, username: data.username, display_name: data.display_name };
+      const u = { token: data.token, username: data.username, display_name: data.display_name, must_change: !!data.must_change };
       setAuth(u);
       setAuthUser(u);
       setLoginPass('');
@@ -420,6 +424,52 @@ function App() {
     clearAuth();
     setAuthUser(null);
   }
+
+  // ==== Cambio forzado de contraseña (primer login) ====
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwConfirm, setPwConfirm] = useState('');
+  const [pwError, setPwError] = useState('');
+
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwError('');
+    if (pwNew !== pwConfirm) { setPwError('La nueva contraseña no coincide'); return; }
+    try {
+      const r = await apiFetch('/auth/password', { method: 'POST', body: JSON.stringify({ old_password: pwCurrent, new_password: pwNew }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'No se pudo cambiar la contraseña');
+      const u = { ...(authUser as AuthUser), must_change: false };
+      setAuth(u);
+      setAuthUser(u);
+      setPwCurrent(''); setPwNew(''); setPwConfirm('');
+    } catch (e2) {
+      setPwError(e2 instanceof Error ? e2.message : 'No se pudo cambiar la contraseña');
+    }
+  };
+
+  // ==== Modal "Avisar bug" ====
+  const [bugOpen, setBugOpen] = useState(false);
+  const [bugText, setBugText] = useState('');
+  const [bugError, setBugError] = useState('');
+  const [bugSent, setBugSent] = useState(false);
+
+  const openBugModal = () => { setBugOpen(true); setBugText(''); setBugError(''); setBugSent(false); };
+  const closeBugModal = () => setBugOpen(false);
+
+  const handleBugSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBugError('');
+    try {
+      const r = await apiFetch('/auth/bugs', { method: 'POST', body: JSON.stringify({ text: bugText }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'No se pudo enviar el reporte');
+      setBugSent(true);
+      setBugText('');
+    } catch (e2) {
+      setBugError(e2 instanceof Error ? e2.message : 'No se pudo enviar el reporte');
+    }
+  };
 
   const [query, setQuery] = useState('');
   const [author, setAuthor] = useState('');
@@ -632,6 +682,23 @@ function App() {
   const [qaAxes, setQaAxes] = useState<Set<string>>(new Set(['escenario', 'critica', 'razonamiento']));
   const [qaTypes, setQaTypes] = useState<Set<string>>(new Set(['open-ended']));
   const [qaConfigOpen, setQaConfigOpen] = useState(false);
+  // Cantidad de ítems por lote (3/5/8)
+  const [qaCount, setQaCount] = useState(5);
+  // Vistas del panel central: 'lote' (generación actual) | 'guardadas' (colección)
+  const [qaView, setQaView] = useState<'lote' | 'guardadas'>('lote');
+  // Subconjunto de fuentes para la generación (vacío = toda la biblioteca)
+  const [genSources, setGenSources] = useState<Set<string>>(new Set());
+  // Puntaje 1-7 plegado por ítem ('Ver puntaje')
+  const [qaRatingOpen, setQaRatingOpen] = useState<Record<number, boolean>>({});
+  // ts del último lote restaurado de una sesión anterior (banner informativo)
+  const [qaRestored, setQaRestored] = useState<number | null>(null);
+  // Descripciones de la configuración (ejes y tipos) visibles sin hover
+  const [qaHelpOpen, setQaHelpOpen] = useState(false);
+  const qaTypeHints: Record<string, string> = {
+    'open-ended': 'Respuesta libre: el evaluado formula su respuesta y se la juzga por contenido.',
+    mcq: 'Opción múltiple: 4 alternativas y una correcta.',
+    scenario: 'Escenario situado: el ítem trae un contexto narrado + pregunta + respuesta esperada.',
+  };
   const qaAxesOptions = [
     { id: 'escenario', label: 'Escenario', color: '#4a90d9' },
     { id: 'critica', label: 'Crítica', color: '#d9534f' },
@@ -758,6 +825,20 @@ function App() {
         setQaSaved(items);
       }
     } catch { setQaDecisions({}); setQaDecisionQ({}); setQaSaved([]); }
+  };
+
+  // Restaurar el último lote generado (para retomar la curación). Solo si no hay
+  // ningún lote en memoria todavía.
+  const loadQaBatch = async () => {
+    if (!authUser) return;
+    try {
+      const r = await apiFetch('/qa-batch');
+      const d = await r.json();
+      if (r.ok && d.batch && d.batch.result && Array.isArray(d.batch.result.qa) && d.batch.result.qa.length > 0) {
+        setQa(prev => (prev ? prev : (d.batch.result as QAResult)));
+        setQaRestored(d.batch.ts || null);
+      }
+    } catch { /* sin batch guardado */ }
   };
 
   const clearDecisionLocal = async (key: string) => {
@@ -920,6 +1001,8 @@ function App() {
   useEffect(() => {
     loadLibrary();
     loadQaStore();
+    loadQaBatch();
+    setQaRestored(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser]);
 
@@ -988,12 +1071,16 @@ function App() {
     setQa(null);
     setQaPhase({ phase: 'resolving', detail: 'Preparando la generación…', pct: 1, elapsed_s: 0 });
     try {
-      // Usar biblioteca del usuario como fuentes
+      // Usar biblioteca del usuario como fuentes (o el subconjunto marcado)
+      const subset = [...genSources];
       const payload: Record<string, unknown> = {
         library: true,
+        count: qaCount,
         axes: [...qaAxes],
         qa_types: [...qaTypes],
       };
+      // Si el usuario marcó un subconjunto de fuentes, pasa los ids explícitos
+      if (subset.length > 0) payload.ids = subset;
 
       const r = await apiFetch('/generate-qa', {
         method: 'POST',
@@ -1012,7 +1099,7 @@ function App() {
           const sr = await apiFetch(`/generate-qa/status?job_id=${jobId}`);
           const s = await sr.json();
           if (!sr.ok) throw new Error(s.error || `HTTP ${sr.status}`);
-          setQaPhase({ phase: s.phase, detail: s.detail || '', pct: s.pct || 0, elapsed_s: s.elapsed_s || 0 });
+          setQaPhase({ phase: s.phase, detail: s.detail || '', pct: s.pct || 0, elapsed_s: s.elapsed_s || 0, used_articles: s.used_articles, item_total: s.item_total });
           if (s.done) {
             settled = true;
             if (s.phase === 'error') finishQa(s.error || 'Error en la generación.');
@@ -1153,6 +1240,42 @@ function App() {
     );
   }
 
+  if (authUser && authUser.must_change) {
+    return (
+      <div className="login-screen">
+        <div className="login-card">
+          <div className="login-header">
+            <div className="login-brands">
+              <span className="brand-chip">CITA</span>
+              <span className="brand-chip">IIDYPCA</span>
+              <span className="brand-chip">SURUS</span>
+            </div>
+            <h1>Primera vez aquí</h1>
+            <p className="login-sub">Hola {authUser.display_name}, antes de entrar tenés que cambiar tu contraseña.</p>
+          </div>
+          <form onSubmit={handlePasswordChange} className="login-form">
+            <h2>Cambiar contraseña</h2>
+            {pwError && <div className="error" role="alert">{pwError}</div>}
+            <p className="pw-hint">Mínimo 8 caracteres y al menos un número. No puede ser igual a tu usuario ni a la anterior.</p>
+            <label className="filter">
+              <span>Contraseña actual</span>
+              <input type="password" className="input login-input" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} autoFocus />
+            </label>
+            <label className="filter">
+              <span>Nueva contraseña</span>
+              <input type="password" className="input login-input" value={pwNew} onChange={(e) => setPwNew(e.target.value)} />
+            </label>
+            <label className="filter">
+              <span>Repetir nueva contraseña</span>
+              <input type="password" className="input login-input" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} />
+            </label>
+            <button type="submit" className="btn-generate" disabled={!pwCurrent || !pwNew || !pwConfirm}>Cambiar contraseña</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <header className="app-header">
@@ -1172,6 +1295,7 @@ function App() {
           </p>
           {authUser && (
             <div className="user-menu">
+              <button type="button" className="bug-btn" onClick={openBugModal} title="Reportar un problema">🐞 Avisar bug</button>
               <span className="user-name" title={authUser.username}>{authUser.display_name}</span>
               <button type="button" className="logout-btn" onClick={handleLogout} title="Cerrar sesión">⏏ Salir</button>
             </div>
@@ -1620,9 +1744,43 @@ function App() {
                 <div className="qa-config-panel">
                   <div className="panel-head">
                     <h2>Configuración</h2>
-                    <span className="panel-count">{qaTypes.size + qaAxes.size} opts</span>
+                    <div className="panel-head-actions">
+                      <span className="panel-count">{qaTypes.size + qaAxes.size} opts</span>
+                      <button
+                        type="button"
+                        className="panel-help-btn"
+                        onClick={() => setQaHelpOpen(!qaHelpOpen)}
+                        title="¿Qué significan los tipos y los ejes?"
+                        aria-expanded={qaHelpOpen}
+                      >
+                        ?
+                      </button>
+                    </div>
                   </div>
                   <div className="qa-config-body">
+                    {qaHelpOpen && (
+                      <div className="qa-help">
+                        <p className="qa-help-title">Tipos de ítem</p>
+                        <ul className="qa-help-list">
+                          {qaTypeOptions.map(t => (
+                            <li key={t.id}><strong>{t.label}:</strong> {qaTypeHints[t.id]}</li>
+                          ))}
+                        </ul>
+                        <p className="qa-help-title">Ejes cognitivos</p>
+                        <ul className="qa-help-list">
+                          {qaAxesOptions.map(ax => (
+                            <li key={ax.id}>
+                              <span className="qa-axis-dot" style={{ backgroundColor: ax.color }}></span>
+                              <strong>{ax.label}:</strong> {qaAxisHints[ax.id]}
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="qa-help-note">
+                          Marcá los tipos y ejes que querés en el próximo lote. Con más de un tipo, el
+                          lote se mezcla distribuyendo los formatos entre los ítems.
+                        </p>
+                      </div>
+                    )}
                     <div className="qa-config-section">
                       <span className="qa-config-label">Tipo de QA</span>
                       <div className="qa-type-grid">
@@ -1645,6 +1803,21 @@ function App() {
                         ))}
                       </div>
                     </div>
+                    <div className="qa-config-section">
+                      <span className="qa-config-label">Cantidad de ítems</span>
+                      <div className="qa-count-row">
+                        {[3, 5, 8].map(c => (
+                          <button
+                            key={c}
+                            type="button"
+                            className={`qa-count-btn${qaCount === c ? ' active' : ''}`}
+                            onClick={() => setQaCount(c)}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1652,7 +1825,19 @@ function App() {
                 <div className="sources-selected-panel">
                   <div className="panel-head">
                     <h2>Fuentes</h2>
-                    <span className="panel-count">{formatNumber(library.length)}</span>
+                    <div className="panel-head-actions">
+                      <span className="panel-count">{formatNumber(library.length)}</span>
+                      {genSources.size > 0 && (
+                        <button
+                          type="button"
+                          className="panel-head-link"
+                          onClick={() => setGenSources(new Set())}
+                          title="Quitar selección: generar con toda la biblioteca"
+                        >
+                          Todo ({library.length})
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="sources-selected-body">
                     {library.length === 0 ? (
@@ -1661,22 +1846,43 @@ function App() {
                         <p><a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('fuentes'); }}>Agregar desde Fuentes →</a></p>
                       </div>
                     ) : (
-                      <div className="sources-selected-list">
-                        {library.slice(0, 12).map((id) => {
-                          const doc = data?.results.find(r => r.id === id);
-                          return (
-                            <span key={id} className="source-tag" title={doc?.title || id}>
-                              <span className="source-tag-title">{doc?.title || id}</span>
-                              <button type="button" className="source-tag-remove" onClick={() => toggleLibraryItem(id)}>×</button>
+                      <>
+                        <p className="sources-hint">
+                          {genSources.size > 0
+                            ? `${genSources.size} marcadas para este lote — las demás no se usan.`
+                            : 'Sin selección: se usa toda la biblioteca.'}
+                        </p>
+                        <div className="sources-selected-list">
+                          {library.slice(0, 12).map((id) => {
+                            const doc = data?.results.find(r => r.id === id);
+                            const marked = genSources.has(id);
+                            return (
+                              <span
+                                key={id}
+                                className={`source-tag${marked ? ' marked' : ''}`}
+                                title={doc?.title || id}
+                                onClick={() => setGenSources(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; })}
+                              >
+                                <span className="source-tag-check" aria-hidden="true">{marked ? '✓' : ''}</span>
+                                <span className="source-tag-title">{doc?.title || id}</span>
+                                <button
+                                  type="button"
+                                  className="source-tag-remove"
+                                  title="Quitar de la biblioteca"
+                                  onClick={(e) => { e.stopPropagation(); toggleLibraryItem(id); }}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            );
+                          })}
+                          {library.length > 12 && (
+                            <span className="source-tag" style={{ color: 'var(--ink-muted)' }}>
+                              +{library.length - 12} más…
                             </span>
-                          );
-                        })}
-                        {library.length > 12 && (
-                          <span className="source-tag" style={{ color: 'var(--ink-muted)' }}>
-                            +{library.length - 12} más…
-                          </span>
-                        )}
-                      </div>
+                          )}
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>
@@ -1687,89 +1893,74 @@ function App() {
                   className="btn-generate"
                   onClick={generateQa}
                   disabled={qaLoading || library.length === 0}
-                  title="Genera 5 preguntas y respuestas a partir de tu biblioteca"
+                  title={`Genera ${qaCount} preguntas y respuestas a partir de ${genSources.size > 0 ? genSources.size : library.length} fuente(s)`}
                 >
-                  {qaLoading ? 'Generando…' : 'Generar preguntas y respuestas'}
+                  {qaLoading ? 'Generando…' : `Generar ${qaCount} preguntas y respuestas`}
                 </button>
                 <p className="actions-hint" style={{ textAlign: 'center', margin: 0, fontSize: '0.78rem', color: 'var(--ink-muted)' }}>
                   {library.length > 0
-                    ? `${formatNumber(library.length)} fuente${library.length === 1 ? '' : 's'} · ${qaTypes.size} tipo${qaTypes.size === 1 ? '' : 's'} · ${qaAxes.size} eje${qaAxes.size === 1 ? '' : 's'}`
+                    ? `${genSources.size > 0 ? genSources.size : library.length} fuente(s) · ${qaTypes.size} tipo(s) · ${qaAxes.size} eje(s)`
                     : 'Agregá fuentes a tu biblioteca para habilitar la generación.'}
                 </p>
               </div>
 
               {/* ── Panel central: QAs ── */}
               <div className="center-stack">
-                {/* ── P&R guardadas del usuario ── */}
-                {qaSaved.length > 0 && (
-                  <section className="panel panel-saved" aria-label="Preguntas y respuestas guardadas">
-                    <div className="panel-head">
-                      <h2>Guardadas ({qaSaved.length})</h2>
-                      <span className="panel-count">
+                {/* ── Segmentado: Lote actual | Mis guardadas ── */}
+                <div className="qa-view-tabs" role="tablist" aria-label="Vista del panel de generación">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={qaView === 'lote'}
+                    className={`qa-view-tab${qaView === 'lote' ? ' active' : ''}`}
+                    onClick={() => setQaView('lote')}
+                  >
+                    📝 Lote actual{qa ? ` (${qa.qa.length})` : ''}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={qaView === 'guardadas'}
+                    className={`qa-view-tab${qaView === 'guardadas' ? ' active' : ''}`}
+                    onClick={() => setQaView('guardadas')}
+                  >
+                    🗂 Mis guardadas ({qaSaved.length})
+                  </button>
+                </div>
+
+                {qaView === 'lote' ? (
+                  <>
+                {/* ── Barra de progreso de curación ── */}
+                {qa && !qaLoading && (() => {
+                  const total = qa.qa.length;
+                  const appr = qa.qa.filter((i) => qaDecisions[hashKey(i.question)] === 'approved').length;
+                  const rej = qa.qa.filter((i) => qaDecisions[hashKey(i.question)] === 'rejected').length;
+                  const decided = appr + rej;
+                  return (
+                    <div className="qa-curation-bar" role="status">
+                      <span className="qa-curation-label">Curación del lote:</span>
+                      <span className="qa-curation-pct">{decided}/{total}</span>
+                      <div className="qa-curation-track" aria-hidden="true">
+                        <div className="qa-curation-fill approved" style={{ width: `${total ? (appr / total) * 100 : 0}%` }} />
+                        <div className="qa-curation-fill rejected" style={{ width: `${total ? (rej / total) * 100 : 0}%` }} />
+                      </div>
+                      <span className="qa-curation-counts">{appr} ✓ · {rej} ✕</span>
+                      <span className="qa-curation-sep">·</span>
+                      <span className="qa-curation-label">Colección:</span>
+                      <span className="qa-curation-counts">
                         {qaSaved.filter((s) => s.d === 'approved').length} ✓ · {qaSaved.filter((s) => s.d === 'rejected').length} ✕
                       </span>
                     </div>
-                    <div className="saved-list">
-                      {qaSaved.map((s) => (
-                        <div key={s.key} className={`saved-item ${s.d}`}>
-                          <div className="saved-item-head">
-                            <span className={`qa-decision-badge ${s.d}`}>
-                              {s.d === 'approved' ? '✓ Aprobada' : '✕ Descartada'}
-                            </span>
-                            {s.cultural_axis && (
-                              <span className="qa-type-badge">{s.cultural_axis}</span>
-                            )}
-                            <div className="bubble-actions">
-                              <button
-                                type="button"
-                                className={`bubble-btn decision-approve${s.d === 'approved' ? ' active' : ''}`}
-                                onClick={() => setDecisionByKey(s.key, 'approved', {
-                                  question: s.q, answer: s.a, options: s.options, correct: s.correct,
-                                  scenario: s.scenario, cultural_axis: s.cultural_axis, cite: s.cite, article_ids: s.article_ids,
-                                })}
-                                disabled={qaDecisionBusy === s.key}
-                                title={s.d === 'approved' ? 'Aprobada — clic para desmarcar' : 'Aprobar y guardar esta P&R'}
-                              >
-                                ✓ Aprobar
-                              </button>
-                              <button
-                                type="button"
-                                className={`bubble-btn decision-reject${s.d === 'rejected' ? ' active' : ''}`}
-                                onClick={() => setDecisionByKey(s.key, 'rejected', {
-                                  question: s.q, answer: s.a, options: s.options, correct: s.correct,
-                                  scenario: s.scenario, cultural_axis: s.cultural_axis, cite: s.cite, article_ids: s.article_ids,
-                                })}
-                                disabled={qaDecisionBusy === s.key}
-                                title={s.d === 'rejected' ? 'Descartada — clic para desmarcar' : 'Descartar esta P&R'}
-                              >
-                                ✕ Descartar
-                              </button>
-                            </div>
-                          </div>
-                          <p className="saved-question">{s.q}</p>
-                          {s.options && s.options.length > 0 ? (
-                            <div className="qa-mcq compact">
-                              {s.options.map((opt: string, i: number) => (
-                                <div key={i} className={`qa-mcq-option${opt.startsWith(s.correct || '') ? ' correct' : ''}`}>
-                                  {opt}
-                                </div>
-                              ))}
-                            </div>
-                          ) : s.scenario ? (
-                            <div className="qa-scenario-block">
-                              <p className="qa-scenario-text">{s.scenario}</p>
-                              <p className="qa-scenario-answer">{s.a}</p>
-                            </div>
-                          ) : (
-                            <p className="saved-answer">{s.a}</p>
-                          )}
-                          <p className="saved-date">
-                            {s.ts ? new Date(s.ts * 1000).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' }) : ''}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
+                  );
+                })()}
+
+                {/* ── Banner: lote restaurado de sesión anterior ── */}
+                {qaRestored && qa && !qaLoading && (
+                  <div className="qa-restored-banner" role="status">
+                    🕘 Retomando un lote generado el{' '}
+                    {new Date(qaRestored * 1000).toLocaleDateString('es-AR', { day: '2-digit', month: 'long', year: 'numeric' })}.
+                    Tus decisiones se mantuvieron; podés seguir curando o generar uno nuevo.
+                  </div>
                 )}
 
                 {/* ── Filtros de QAs ── */}
@@ -1816,11 +2007,16 @@ function App() {
                   <div className="qa-loading" role="status">
                     <div className="qa-spinner" aria-hidden="true" />
                     <div className="qa-loading-body">
-                      <p className="qa-loading-title">Generando preguntas y respuestas…</p>
+                      <p className="qa-loading-title">Generando {qaPhase?.item_total || qaCount} preguntas y respuestas…</p>
+                      {qaPhase?.used_articles && qaPhase.used_articles.length > 0 && (
+                        <p className="qa-loading-papers" title={qaPhase.used_articles.map((a) => a.title).join('\n')}>
+                          📚 {qaPhase.used_articles.length} fuente(s) · primera: «{qaPhase.used_articles[0].title}»
+                        </p>
+                      )}
                       <ol className="qa-steps">
                         {[
                           { id: 'fulltext', label: 'Preparando textos (PDF → texto completo)' },
-                          { id: 'llm', label: 'El modelo escribe los 5 items' },
+                          { id: 'llm', label: `El modelo escribe los ${qaPhase?.item_total || qaCount} items` },
                           { id: 'lint', label: 'Auto-auditoría del lote' },
                         ].map((st) => {
                           const order = ['resolving', 'fulltext', 'llm', 'lint', 'done'];
@@ -1946,11 +2142,13 @@ function App() {
                                 ) : (
                                   <p>{item.question}</p>
                                 )}
-                                <QARating
-                                  value={ratings[hashKey(item.question)]?.q || [0, 0, 0, 0]}
-                                  onChange={(v) => setRating(item, v, ratings[hashKey(item.question)]?.a || [0, 0, 0, 0])}
-                                  dimensions={QUESTION_DIMS}
-                                />
+                                {qaRatingOpen[item.n] && (
+                                  <QARating
+                                    value={ratings[hashKey(item.question)]?.q || [0, 0, 0, 0]}
+                                    onChange={(v) => setRating(item, v, ratings[hashKey(item.question)]?.a || [0, 0, 0, 0])}
+                                    dimensions={QUESTION_DIMS}
+                                  />
+                                )}
                                 {regeneratingQuestion === item.n && (
                                   <div className="regenerate-panel">
                                     <p className="regenerate-hint">
@@ -1974,28 +2172,10 @@ function App() {
                                   </div>
                                 )}
                               </div>
-                              <div className="chat-bubble answer">
+                              <div className={`chat-bubble answer${decision ? ` decided-${decision}` : ''}`}>
                                 <div className="bubble-header">
                                   <span className="bubble-label answer-label">R{item.n}</span>
                                   <div className="bubble-actions">
-                                    <button
-                                      type="button"
-                                      className={`bubble-btn decision-approve${decision === 'approved' ? ' active' : ''}`}
-                                      onClick={() => setDecision(item.n, 'approved')}
-                                      disabled={qaDecisionBusy === hashKey(item.question)}
-                                      title={decision === 'approved' ? 'Aprobada — clic para desmarcar' : 'Aprobar y guardar esta P&R'}
-                                    >
-                                      ✓ Aprobar
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`bubble-btn decision-reject${decision === 'rejected' ? ' active' : ''}`}
-                                      onClick={() => setDecision(item.n, 'rejected')}
-                                      disabled={qaDecisionBusy === hashKey(item.question)}
-                                      title={decision === 'rejected' ? 'Descartada — clic para desmarcar' : 'Descartar esta P&R'}
-                                    >
-                                      ✕ Descartar
-                                    </button>
                                     <button
                                       type="button"
                                       className="bubble-btn edit"
@@ -2077,11 +2257,48 @@ function App() {
                                     </button>
                                   </div>
                                 )}
-                                <QARating
-                                  value={ratings[hashKey(item.question)]?.a || [0, 0, 0, 0]}
-                                  onChange={(v) => setRating(item, ratings[hashKey(item.question)]?.q || [0, 0, 0, 0], v)}
-                                  dimensions={ANSWER_DIMS}
-                                />
+                                {/* ── Decisión: acción principal al final del par ── */}
+                                <div className={`qa-decision-block${decision ? ` has-${decision}` : ''}`}>
+                                  <span className="qa-decision-label">
+                                    {decision === 'approved' ? '✓ Aprobada' : decision === 'rejected' ? '✕ Descartada' : 'Decidí esta P&R:'}
+                                  </span>
+                                  <div className="qa-decision-btns">
+                                    <button
+                                      type="button"
+                                      className={`qa-decision-btn approve${decision === 'approved' ? ' active' : ''}`}
+                                      onClick={() => setDecision(item.n, 'approved')}
+                                      disabled={qaDecisionBusy === hashKey(item.question)}
+                                      title={decision === 'approved' ? 'Aprobada — clic para desmarcar' : 'Aprobar y guardar esta P&R en tu colección'}
+                                    >
+                                      ✓ Aprobar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`qa-decision-btn reject${decision === 'rejected' ? ' active' : ''}`}
+                                      onClick={() => setDecision(item.n, 'rejected')}
+                                      disabled={qaDecisionBusy === hashKey(item.question)}
+                                      title={decision === 'rejected' ? 'Descartada — clic para desmarcar' : 'Descartar esta P&R'}
+                                    >
+                                      ✕ Descartar
+                                    </button>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="qa-rating-toggle"
+                                    onClick={() => setQaRatingOpen(prev => ({ ...prev, [item.n]: !prev[item.n] }))}
+                                    aria-expanded={!!qaRatingOpen[item.n]}
+                                    title="Puntuar en detalle (1-7 por dimensión)"
+                                  >
+                                    {qaRatingOpen[item.n] ? '▾ Ocultar puntaje' : '▸ Ver puntaje'}
+                                  </button>
+                                </div>
+                                {qaRatingOpen[item.n] && (
+                                  <QARating
+                                    value={ratings[hashKey(item.question)]?.a || [0, 0, 0, 0]}
+                                    onChange={(v) => setRating(item, ratings[hashKey(item.question)]?.q || [0, 0, 0, 0], v)}
+                                    dimensions={ANSWER_DIMS}
+                                  />
+                                )}
                                 {(ratings[hashKey(item.question)]?.q?.some(v => v > 0) || ratings[hashKey(item.question)]?.a?.some(v => v > 0)) && (
                                   <textarea
                                     className="qa-notes"
@@ -2229,7 +2446,7 @@ function App() {
                   <div className="chat-empty">
                     <p>
                       {library.length > 0
-                        ? 'Presioná «Generar preguntas y respuestas» para crear 5 ítems a partir de tu biblioteca.'
+                        ? `Presioná «Generar ${qaCount} preguntas y respuestas» para crear ${qaCount} ítems a partir de tu biblioteca.`
                         : 'Agregá fuentes a tu biblioteca desde el tab Fuentes y presioná «Generar preguntas y respuestas».'}
                     </p>
                     {library.length === 0 && (
@@ -2238,6 +2455,95 @@ function App() {
                       </button>
                     )}
                   </div>
+                )}
+                </>
+                ) : (
+                  /* ── Vista: Mis guardadas (colección del usuario) ── */
+                  <section className="panel panel-saved" aria-label="Preguntas y respuestas guardadas">
+                    <div className="panel-head">
+                      <h2>Mis guardadas ({qaSaved.length})</h2>
+                      <div className="panel-head-actions">
+                        <span className="panel-count">
+                          {qaSaved.filter((s) => s.d === 'approved').length} ✓ · {qaSaved.filter((s) => s.d === 'rejected').length} ✕
+                        </span>
+                        <button
+                          type="button"
+                          className="panel-head-link"
+                          onClick={() => setQaView('lote')}
+                          title="Volver al lote actual"
+                        >
+                          ← Volver al lote
+                        </button>
+                      </div>
+                    </div>
+                    {qaSaved.length === 0 ? (
+                      <div className="chat-empty" style={{ padding: '1rem' }}>
+                        <p>Aún no guardaste ninguna P&R.</p>
+                        <p>Aprobá o descartá un par del lote actual y quedará acá para siempre.</p>
+                      </div>
+                    ) : (
+                      <div className="saved-list">
+                        {qaSaved.map((s) => (
+                          <div key={s.key} className={`saved-item ${s.d}`}>
+                            <div className="saved-item-head">
+                              <span className={`qa-decision-badge ${s.d}`}>
+                                {s.d === 'approved' ? '✓ Aprobada' : '✕ Descartada'}
+                              </span>
+                              {s.cultural_axis && (
+                                <span className="qa-type-badge">{s.cultural_axis}</span>
+                              )}
+                              <div className="bubble-actions">
+                                <button
+                                  type="button"
+                                  className={`bubble-btn decision-approve${s.d === 'approved' ? ' active' : ''}`}
+                                  onClick={() => setDecisionByKey(s.key, 'approved', {
+                                    question: s.q, answer: s.a, options: s.options, correct: s.correct,
+                                    scenario: s.scenario, cultural_axis: s.cultural_axis, cite: s.cite, article_ids: s.article_ids,
+                                  })}
+                                  disabled={qaDecisionBusy === s.key}
+                                  title={s.d === 'approved' ? 'Aprobada — clic para desmarcar' : 'Aprobar y guardar esta P&R'}
+                                >
+                                  ✓ Aprobar
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`bubble-btn decision-reject${s.d === 'rejected' ? ' active' : ''}`}
+                                  onClick={() => setDecisionByKey(s.key, 'rejected', {
+                                    question: s.q, answer: s.a, options: s.options, correct: s.correct,
+                                    scenario: s.scenario, cultural_axis: s.cultural_axis, cite: s.cite, article_ids: s.article_ids,
+                                  })}
+                                  disabled={qaDecisionBusy === s.key}
+                                  title={s.d === 'rejected' ? 'Descartada — clic para desmarcar' : 'Descartar esta P&R'}
+                                >
+                                  ✕ Descartar
+                                </button>
+                              </div>
+                            </div>
+                            <p className="saved-question">{s.q}</p>
+                            {s.options && s.options.length > 0 ? (
+                              <div className="qa-mcq compact">
+                                {s.options.map((opt: string, i: number) => (
+                                  <div key={i} className={`qa-mcq-option${opt.startsWith(s.correct || '') ? ' correct' : ''}`}>
+                                    {opt}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : s.scenario ? (
+                              <div className="qa-scenario-block">
+                                <p className="qa-scenario-text">{s.scenario}</p>
+                                <p className="qa-scenario-answer">{s.a}</p>
+                              </div>
+                            ) : (
+                              <p className="saved-answer">{s.a}</p>
+                            )}
+                            <p className="saved-date">
+                              {s.ts ? new Date(s.ts * 1000).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' }) : ''}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
                 )}
               </div>
             </div>
@@ -2324,6 +2630,42 @@ function App() {
         Hacé click en una fuente para abrir su ficha con el resumen y la descarga del PDF desde nuestro
         backup (Hugging Face).
       </footer>
+
+      {bugOpen && (
+        <div className="modal-overlay" onClick={closeBugModal} role="dialog" aria-modal="true" aria-label="Avisar un bug">
+          <div className="bug-modal" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="bug-close" onClick={closeBugModal} aria-label="Cerrar">✕</button>
+            <h2>🐞 Avisar un bug</h2>
+            {bugSent ? (
+              <div className="bug-success" role="status">
+                ✅ ¡Gracias! Tu reporte quedó guardado.
+                <div className="bug-success-actions">
+                  <button type="button" className="btn-generate" onClick={closeBugModal}>Cerrar</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="bug-hint">Contanos qué pasó: qué estabas haciendo, qué esperabas y qué ocurrió. Se envía anónimo (solo se guarda tu usuario interno).</p>
+                {bugError && <div className="error" role="alert">{bugError}</div>}
+                <form onSubmit={handleBugSubmit} className="bug-form">
+                  <textarea
+                    className="input bug-textarea"
+                    placeholder="Describí el problema…"
+                    rows={6}
+                    value={bugText}
+                    onChange={(e) => setBugText(e.target.value)}
+                    autoFocus
+                  />
+                  <div className="bug-actions">
+                    <button type="button" className="logout-btn" onClick={closeBugModal}>Cancelar</button>
+                    <button type="submit" className="btn-generate" disabled={!bugText.trim()}>Enviar</button>
+                  </div>
+                </form>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
