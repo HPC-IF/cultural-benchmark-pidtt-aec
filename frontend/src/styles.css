@@ -291,6 +291,25 @@ body {
   color: var(--danger);
   font-weight: 500;
 }
+.error .btn {
+  margin-top: 0.75rem;
+}
+.qa-retry-hint {
+  margin-top: 0.5rem;
+  font-size: 0.9em;
+  font-weight: 400;
+  opacity: 0.85;
+}
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--danger);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 0.85em;
+  margin-left: 0.75rem;
+  padding: 0;
+}
 
 /* ========================================
    Layout de 3 columnas

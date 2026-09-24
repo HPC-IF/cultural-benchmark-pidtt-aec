@@ -531,6 +531,7 @@ function App() {
   const [regeneratingAnswer, setRegeneratingAnswer] = useState<number | null>(null);
   const [regeneratePrompt, setRegeneratePrompt] = useState<Record<number, string>>({});
   const [regeneratingLoading, setRegeneratingLoading] = useState<number | null>(null);
+  const [regenerateError, setRegenerateError] = useState<string | null>(null);
 
   // Regenerar pregunta individual (llama al backend que reenvía al LLM)
   const regenerateQuestion = async (n: number, instruction: string) => {
@@ -560,9 +561,11 @@ function App() {
           };
         });
         clearDecisionFor(n); // pregunta nueva → decisión anterior no aplica
+      } else if (d.error) {
+        setRegenerateError(`Pregunta ${n}: ${d.error}`);
       }
     } catch (e) {
-      console.error('Regenerate question error:', e);
+      setRegenerateError(`Pregunta ${n}: ${e instanceof Error ? e.message : 'error de red'}`);
     } finally {
       setRegeneratingLoading(null);
       setRegeneratingQuestion(null);
@@ -606,9 +609,11 @@ function App() {
           };
         });
         clearDecisionFor(n); // respuesta nueva → decisión anterior no aplica
+      } else if (d.error) {
+        setRegenerateError(`Respuesta ${n}: ${d.error}`);
       }
     } catch (e) {
-      console.error('Regenerate answer error:', e);
+      setRegenerateError(`Respuesta ${n}: ${e instanceof Error ? e.message : 'error de red'}`);
     } finally {
       setRegeneratingLoading(null);
       setRegeneratingAnswer(null);
@@ -1055,6 +1060,7 @@ function App() {
     stopQaPoll();
     setQaLoading(false);
     setQaPhase(null);
+    setRegenerateError(null);
     if (error) setQaError(error);
     if (result) {
       setQa(result);
@@ -1064,7 +1070,10 @@ function App() {
     }
   };
 
-  const generateQa = async () => {
+  // último payload de generación guardado para poder reintentar sin rearmar nada
+  const lastGenPayload = useRef<Record<string, unknown> | null>(null);
+
+  const generateQa = async (payloadOverride?: Record<string, unknown>) => {
     closeDetail();
     setQaLoading(true);
     setQaError(null);
@@ -1073,14 +1082,15 @@ function App() {
     try {
       // Usar biblioteca del usuario como fuentes (o el subconjunto marcado)
       const subset = [...genSources];
-      const payload: Record<string, unknown> = {
+      const payload: Record<string, unknown> = payloadOverride || {
         library: true,
         count: qaCount,
         axes: [...qaAxes],
         qa_types: [...qaTypes],
       };
       // Si el usuario marcó un subconjunto de fuentes, pasa los ids explícitos
-      if (subset.length > 0) payload.ids = subset;
+      if (!payloadOverride && subset.length > 0) payload.ids = subset;
+      lastGenPayload.current = payload;
 
       const r = await apiFetch('/generate-qa', {
         method: 'POST',
@@ -1122,6 +1132,13 @@ function App() {
     } catch (e) {
       finishQa(e instanceof Error ? e.message : 'Error generando las preguntas y respuestas.');
     }
+  };
+
+  // Reintentar la generación con el último payload (no hace falta rearmar nada)
+  const retryGenerate = () => {
+    const p = lastGenPayload.current;
+    if (!p) return;
+    generateQa(p);
   };
 
   const requestId = useRef(0);
@@ -2048,9 +2065,32 @@ function App() {
                 )}
 
                 {/* ── Error ── */}
+                {regenerateError && (
+                  <div className="error" role="alert">
+                    <strong>No se pudo regenerar:</strong> {regenerateError}
+                    <button className="btn-link" onClick={() => setRegenerateError(null)}>
+                      cerrar
+                    </button>
+                  </div>
+                )}
                 {qaError && (
                   <div className="error" role="alert">
                     <strong>No se pudieron generar las preguntas:</strong> {qaError}
+                    {lastGenPayload.current && (
+                      <>
+                        <div className="qa-retry-hint">
+                          El servicio LLM pudo haber estado ocupado o con error temporal.
+                          Probá de nuevo, sin volver a armar la consulta.
+                        </div>
+                        <button
+                          className="btn btn-primary"
+                          onClick={retryGenerate}
+                          disabled={qaLoading}
+                        >
+                          ↻ Reintentar con las mismas fuentes
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
 
