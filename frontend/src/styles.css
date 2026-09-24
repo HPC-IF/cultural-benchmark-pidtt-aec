@@ -2913,6 +2913,11 @@ body {
   border-color: var(--gold);
 }
 
+.bubble-btn.to-chat:hover {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+
 /* Decisiones aprobar/descartar por P&R */
 .bubble-btn.decision-approve,
 .bubble-btn.decision-reject {

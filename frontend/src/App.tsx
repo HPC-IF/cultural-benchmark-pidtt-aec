@@ -2156,6 +2156,17 @@ function App() {
                                     >
                                       ⟳
                                     </button>
+                                    <button
+                                      type="button"
+                                      className="bubble-btn to-chat"
+                                      onClick={() => {
+                                        setChatInput(item.question);
+                                        setActiveTab('chat');
+                                      }}
+                                      title="Enviar esta pregunta al chat y probarle al LLM"
+                                    >
+                                      💬
+                                    </button>
                                   </div>
                                 </div>
                                 {editingQuestion === item.n ? (
@@ -2622,6 +2633,7 @@ function App() {
                   className="chat-input"
                   placeholder="Escribí tu mensaje…"
                   value={chatInput}
+                  autoFocus
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
