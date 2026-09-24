@@ -1080,16 +1080,20 @@ function App() {
     setQa(null);
     setQaPhase({ phase: 'resolving', detail: 'Preparando la generación…', pct: 1, elapsed_s: 0 });
     try {
-      // Usar biblioteca del usuario como fuentes (o el subconjunto marcado)
+      // Usar biblioteca del usuario como fuentes (o el subconjunto marcado).
+      // Guardia: payloadOverride solo vale si parece un payload real (nunca un
+      // evento sintético de React, que traria referencias ciclicas).
+      const validOverride = payloadOverride && typeof payloadOverride === 'object'
+        && ('library' in payloadOverride || 'count' in payloadOverride);
       const subset = [...genSources];
-      const payload: Record<string, unknown> = payloadOverride || {
+      const payload: Record<string, unknown> = validOverride ? { ...payloadOverride } : {
         library: true,
         count: qaCount,
         axes: [...qaAxes],
         qa_types: [...qaTypes],
       };
-      // Si el usuario marcó un subconjunto de fuentes, pasa los ids explícitos
-      if (!payloadOverride && subset.length > 0) payload.ids = subset;
+      // Si el usuario marcó un subconjunto de fuentes, pasa los ids explicitos
+      if (!validOverride && subset.length > 0) payload.ids = subset;
       lastGenPayload.current = payload;
 
       const r = await apiFetch('/generate-qa', {
@@ -1908,7 +1912,7 @@ function App() {
                 <button
                   type="button"
                   className="btn-generate"
-                  onClick={generateQa}
+                  onClick={() => generateQa()}
                   disabled={qaLoading || library.length === 0}
                   title={`Genera ${qaCount} preguntas y respuestas a partir de ${genSources.size > 0 ? genSources.size : library.length} fuente(s)`}
                 >
