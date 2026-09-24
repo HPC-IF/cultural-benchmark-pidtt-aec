@@ -285,6 +285,8 @@ class Handler(BaseHTTPRequestHandler):
                 return auth.handle_login(self)
             if u.path == "/auth/logout":
                 return auth.handle_logout(self)
+            if u.path == "/auth/password":
+                return auth.handle_password(self)
             return self._json({"error": "not found"}, 404)
 
         username = auth.require_auth(self)
