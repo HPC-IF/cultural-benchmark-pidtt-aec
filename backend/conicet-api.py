@@ -9,6 +9,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 import urllib.request
+import urllib.error
 
 import auth
 
@@ -17,6 +18,7 @@ DATA_DIR = "/mnt/shared/conicet-data"
 LIBRARY_DIR = "/mnt/shared/pidtt-aec/libraries"
 QA_STORE_DIR = "/mnt/shared/pidtt-aec/qas"
 BATCH_DIR = "/mnt/shared/pidtt-aec/batches"
+MODLOG_DIR = "/mnt/shared/pidtt-aec/moderation"
 LLM_URL = os.environ.get("LLM_URL", "http://192.168.1.68:8005/v1/chat/completions")
 LLM_MODEL = os.environ.get("LLM_MODEL", "citecca-agent")
 HOST = "0.0.0.0"
@@ -274,6 +276,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_qa_store_get(username)
             if u.path == "/qa-batch":
                 return self._handle_qa_batch_get(username)
+            if u.path.startswith("/admin/"):
+                return self._handle_admin_get(u.path)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
@@ -287,6 +291,8 @@ class Handler(BaseHTTPRequestHandler):
                 return auth.handle_logout(self)
             if u.path == "/auth/password":
                 return auth.handle_password(self)
+            if u.path == "/auth/bugs":
+                return auth.handle_bugs(self)
             return self._json({"error": "not found"}, 404)
 
         username = auth.require_auth(self)
@@ -308,6 +314,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_qa_store_post(username)
             if u.path == "/qa-batch":
                 return self._handle_qa_batch_post(username)
+            if u.path.startswith("/admin/"):
+                return self._handle_admin_post(u.path)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
@@ -425,7 +433,7 @@ class Handler(BaseHTTPRequestHandler):
         job_id = secrets.token_hex(16)
         now = time.time()
         with QAJOBS_lock:
-            QAJOBS[job_id] = {"phase": "resolving", "detail": "Preparando...", "pct": 0, "elapsed_s": 0, "done": False, "used_articles": [], "item_total": 0}
+            QAJOBS[job_id] = {"phase": "resolving", "detail": "Preparando...", "pct": 0, "elapsed_s": 0, "done": False, "started_at": now, "username": username, "used_articles": [], "item_total": 0}
 
         t = threading.Thread(target=_qa_worker, args=(job_id, body, username), daemon=True)
         t.start()
@@ -736,6 +744,300 @@ class Handler(BaseHTTPRequestHandler):
             "index_size": len(index),
             "took_ms": 0,
         })
+
+    def _handle_admin_get(self, path):
+        import sqlite3 as _sqlite3
+        admin = auth.require_admin(self)
+        if not admin:
+            return
+        try:
+            if path == "/admin/users":
+                db = auth._connect()
+                rows = db.execute("SELECT username, display_name, created_at, last_login, must_change, role, disabled FROM users ORDER BY username").fetchall()
+                db.close()
+                users = [{"username": r[0], "display_name": r[1], "created_at": r[2], "last_login": r[3], "must_change": bool(r[4]), "role": r[5] or "user", "disabled": bool(r[6])} for r in rows]
+                return self._json({"users": users, "total": len(users)})
+            if path == "/admin/collection":
+                # Union de qa-store de todos los usuarios; filtros opcionales:
+                # username, axis, type, decision, q (texto)
+                items = []
+                if os.path.isdir(QA_STORE_DIR):
+                    for fn in sorted(os.listdir(QA_STORE_DIR)):
+                        if not fn.endswith(".json"):
+                            continue
+                        uname = fn[:-5]
+                        store = _load_qa_store(uname)
+                        for k, v in store.items():
+                            if isinstance(v, dict):
+                                items.append({"username": uname, "key": k, **v})
+                fq = parse_qs(urlparse(self.path).query)
+                fuser = fq.get("username", [""])[0]
+                fax = fq.get("axis", [""])[0]
+                ftype = fq.get("type", [""])[0]
+                fdec = fq.get("decision", [""])[0]
+                fq_t = fq.get("q", [""])[0].lower()
+                if fuser:
+                    items = [i for i in items if i.get("username") == fuser]
+                if fax:
+                    items = [i for i in items if (i.get("cultural_axis") or "") == fax]
+                if ftype:
+                    items = [i for i in items if (i.get("type") or i.get("qa_type") or "") == ftype]
+                if fdec:
+                    items = [i for i in items if (i.get("d") or "") == fdec]
+                if fq_t:
+                    items = [i for i in items if fq_t in (i.get("q") or "").lower() or fq_t in (i.get("a") or "").lower() or fq_t in (i.get("cite") or "").lower()]
+                approved = sum(1 for i in items if i.get("d") == "approved")
+                rejected = sum(1 for i in items if i.get("d") == "rejected")
+                # más recientes primero
+                items.sort(key=lambda i: i.get("ts") or 0, reverse=True)
+                return self._json({"items": items, "total": len(items), "approved": approved, "rejected": rejected})
+            if path == "/admin/collection/export":
+                items = []
+                if os.path.isdir(QA_STORE_DIR):
+                    for fn in sorted(os.listdir(QA_STORE_DIR)):
+                        if not fn.endswith(".json"):
+                            continue
+                        uname = fn[:-5]
+                        for k, v in _load_qa_store(uname).items():
+                            if isinstance(v, dict):
+                                items.append({"username": uname, "key": k, **v})
+                fmt = parse_qs(urlparse(self.path).query).get("format", ["json"])[0]
+                if fmt == "csv":
+                    import csv, io
+                    buf = io.StringIO()
+                    w = csv.writer(buf)
+                    w.writerow(["username", "decision", "ts", "question", "answer", "options", "correct", "scenario", "cultural_axis", "cite", "article_ids"])
+                    for i in items:
+                        w.writerow([i.get("username", ""), i.get("d", ""), i.get("ts", ""), i.get("q", ""), i.get("a", ""), "; ".join(i.get("options") or []), i.get("correct", ""), i.get("scenario", ""), i.get("cultural_axis", ""), i.get("cite", ""), "; ".join(i.get("article_ids") or [])])
+                    body = buf.getvalue().encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/csv; charset=utf-8")
+                    self.send_header("Content-Disposition", 'attachment; filename="pidtt-aec-collection.csv"')
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                body = json.dumps({"exported_at": time.time(), "total": len(items), "items": items}, ensure_ascii=False, indent=1).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="pidtt-aec-collection.json"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if path == "/admin/bugs":
+                db = auth._connect()
+                rows = db.execute("SELECT id, username, text, created_at, status FROM bugs ORDER BY created_at DESC").fetchall()
+                db.close()
+                fstatus = parse_qs(urlparse(self.path).query).get("status", [""])[0]
+                bugs = [{"id": r[0], "username": r[1], "text": r[2], "created_at": r[3], "status": r[4] or "open"} for r in rows]
+                if fstatus:
+                    bugs = [b for b in bugs if b["status"] == fstatus]
+                return self._json({"bugs": bugs, "total": len(bugs)})
+            if path == "/admin/stats":
+                # Actividad general
+                users_total = 0
+                approved_total = 0
+                rejected_total = 0
+                per_user = {}
+                if os.path.isdir(QA_STORE_DIR):
+                    for fn in sorted(os.listdir(QA_STORE_DIR)):
+                        if not fn.endswith(".json"):
+                            continue
+                        uname = fn[:-5]
+                        users_total += 1
+                        store = _load_qa_store(uname)
+                        a = sum(1 for v in store.values() if isinstance(v, dict) and v.get("d") == "approved")
+                        rj = sum(1 for v in store.values() if isinstance(v, dict) and v.get("d") == "rejected")
+                        approved_total += a
+                        rejected_total += rj
+                        per_user[uname] = {"approved": a, "rejected": rj, "total": a + rj}
+                db = auth._connect()
+                n_users = db.execute("SELECT count(*) FROM users").fetchone()[0]
+                n_bugs = db.execute("SELECT count(*) FROM bugs").fetchone()[0]
+                db.close()
+                # jobs activos
+                with QAJOBS_lock:
+                    active = sum(1 for j in QAJOBS.values() if not j.get("done"))
+                return self._json({
+                    "users": n_users, "curators": users_total,
+                    "approved": approved_total, "rejected": rejected_total,
+                    "open_bugs": n_bugs, "active_jobs": active,
+                    "per_user": per_user,
+                    "metadata_items": len(_load_metadata()),
+                })
+            if path == "/admin/system":
+                # Scraping (datos, sin escribir respuesta) + salud del LLM + jobs
+                sc = _scraping_status_data() if callable(globals().get("_scraping_status_data")) else {}
+                llm = _llm_health()
+                with QAJOBS_lock:
+                    jobs = [{"job_id": jid, "phase": j.get("phase"), "detail": j.get("detail") or j.get("error"), "elapsed_s": j.get("elapsed_s")}
+                            for jid, j in QAJOBS.items() if not j.get("done")]
+                    recent_errors = [
+                        {"job_id": jid, "phase": j.get("phase"), "error": (j.get("error") or "")[:300]}
+                        for jid, j in sorted(QAJOBS.items(), key=lambda kv: kv[1].get("started_at", 0), reverse=True)
+                        if j.get("done") and j.get("phase") == "error"
+                    ][:10]
+                return self._json({"scraper": sc, "llm": llm, "active_jobs": jobs, "recent_errors": recent_errors})
+            return self._json({"error": "not found"}, 404)
+        except Exception as e:
+            return self._json({"error": str(e)}, 500)
+
+    def _handle_admin_post(self, path):
+        import sqlite3 as _sqlite3
+        admin = auth.require_admin(self)
+        if not admin:
+            return
+        clen = int(self.headers.get("Content-Length") or 0)
+        if clen <= 0 or clen > 50000:
+            return self._json({"error": "body invalido"}, 400)
+        body = json.loads(self.rfile.read(clen).decode())
+        try:
+            if path == "/admin/users":
+                action = body.get("action")
+                uname = (body.get("username") or "").strip()
+                if action == "create":
+                    if not uname or not (body.get("password")):
+                        return self._json({"error": "username y password requeridos"}, 400)
+                    err = auth._password_error(body["password"], username=uname)
+                    if err:
+                        return self._json({"error": err}, 400)
+                    db = auth._connect()
+                    exists = db.execute("SELECT 1 FROM users WHERE username=?", (uname,)).fetchone()
+                    db.close()
+                    if exists:
+                        return self._json({"error": "el usuario ya existe"}, 409)
+                    ok = auth.create_user(uname, body["password"], (body.get("display_name") or uname).strip(), must_change=body.get("must_change", True))
+                    if not ok:
+                        return self._json({"error": "no se pudo crear"}, 500)
+                    if body.get("role") == "admin":
+                        db = auth._connect()
+                        db.execute("UPDATE users SET role='admin' WHERE username=?", (uname,))
+                        db.commit()
+                        db.close()
+                    return self._json({"ok": True, "username": uname})
+                if action == "delete":
+                    if not uname or uname == admin:
+                        return self._json({"error": "no te podés eliminar a vos mismo"}, 400)
+                    db = auth._connect()
+                    row = db.execute("SELECT 1 FROM users WHERE username=?", (uname,)).fetchone()
+                    has_llm_key_col = "llm_api_key" in [r[1] for r in db.execute("PRAGMA table_info(users)")]
+                    llm_key = None
+                    if has_llm_key_col:
+                        krow = db.execute("SELECT llm_api_key FROM users WHERE username=?", (uname,)).fetchone()
+                        llm_key = krow[0] if krow and krow[0] else None
+                    db.execute("DELETE FROM users WHERE username=?", (uname,))
+                    db.execute("DELETE FROM tokens WHERE username=?", (uname,))
+                    db.commit()
+                    db.close()
+                    if llm_key:
+                        # revocar la key del tracker (best-effort)
+                        try:
+                            import urllib.request
+                            req = urllib.request.Request(
+                                LLM_URL.rsplit("/v1", 1)[0].rstrip("/") + "/admin/keys",
+                                data=json.dumps({"key": llm_key}).encode(), method="DELETE",
+                                headers={"Content-Type": "application/json", "Authorization": "Bearer " + llm_key},
+                            )
+                            urllib.request.urlopen(req, timeout=5)
+                        except Exception as e:
+                            print(f"[admin] no se pudo revocar la key del tracker para {uname}: {e}")
+                    for d in (QA_STORE_DIR, BATCH_DIR, LIBRARY_DIR):
+                        p = os.path.join(d, f"{uname}.json")
+                        if os.path.exists(p):
+                            os.remove(p)
+                    return self._json({"ok": True})
+                if action == "reset-password":
+                    if not uname:
+                        return self._json({"error": "username requerido"}, 400)
+                    newpw = body.get("new_password") or ""
+                    err = auth._password_error(newpw, username=uname)
+                    if err:
+                        return self._json({"error": err}, 400)
+                    db = auth._connect()
+                    row = db.execute("SELECT password_hash FROM users WHERE username=?", (uname,)).fetchone()
+                    if not row:
+                        db.close()
+                        return self._json({"error": "usuario no encontrado"}, 404)
+                    db.execute("UPDATE users SET password_hash=?, must_change=0 WHERE username=?", (auth._hash_password(newpw), uname))
+                    db.execute("UPDATE tokens SET must_change=0 WHERE username=?", (uname,))
+                    db.commit()
+                    db.close()
+                    return self._json({"ok": True})
+                if action == "set-role":
+                    role = body.get("role")
+                    if role not in ("admin", "user") or not uname:
+                        return self._json({"error": "role debe ser admin|user"}, 400)
+                    db = auth._connect()
+                    db.execute("UPDATE users SET role=? WHERE username=?", (role, uname))
+                    db.execute("UPDATE tokens SET role=? WHERE username=?", (role, uname))
+                    db.commit()
+                    db.close()
+                    return self._json({"ok": True})
+                if action == "set-must-change":
+                    if not uname:
+                        return self._json({"error": "username requerido"}, 400)
+                    flag = 1 if body.get("value") else 0
+                    db = auth._connect()
+                    db.execute("UPDATE users SET must_change=? WHERE username=?", (flag, uname))
+                    db.execute("UPDATE tokens SET must_change=? WHERE username=?", (flag, uname))
+                    db.commit()
+                    db.close()
+                    return self._json({"ok": True})
+                if action == "set-disabled":
+                    if not uname or uname == admin:
+                        return self._json({"error": "no te podés deshabilitar a vos mismo"}, 400)
+                    flag = 1 if body.get("value") else 0
+                    db = auth._connect()
+                    db.execute("UPDATE users SET disabled=? WHERE username=?", (flag, uname))
+                    if flag:
+                        db.execute("DELETE FROM tokens WHERE username=?", (uname,))  # expulsa sesiones activas
+                    db.commit()
+                    db.close()
+                    return self._json({"ok": True})
+                return self._json({"error": "accion invalida (create|delete|reset-password|set-role|set-must-change|set-disabled)"}, 400)
+            if path == "/admin/collection":
+                action = body.get("action")
+                if action == "delete-item":
+                    uname = (body.get("username") or "").strip()
+                    key = (body.get("key") or "").strip()
+                    if not uname or not key:
+                        return self._json({"error": "username y key requeridos"}, 400)
+                    reason = (body.get("reason") or "").strip()[:500]
+                    with _qa_store_lock:
+                        store = _load_qa_store(uname)
+                        if key not in store:
+                            return self._json({"error": "item no encontrado"}, 404)
+                        item = store.pop(key)
+                        _save_qa_store(uname, store)
+                    # auditoría de moderación
+                    try:
+                        os.makedirs(MODLOG_DIR, exist_ok=True)
+                        with open(os.path.join(MODLOG_DIR, "moderation.jsonl"), "a") as f:
+                            f.write(json.dumps({"ts": time.time(), "by": admin, "action": "delete-item", "username": uname, "key": key, "reason": reason, "question": (item.get("q") if isinstance(item, dict) else "")[:200]}, ensure_ascii=False) + "\n")
+                    except OSError as e:
+                        print(f"[admin] no se pudo escribir el log de moderacion: {e}")
+                    return self._json({"ok": True})
+                return self._json({"error": "accion invalida (delete-item)"}, 400)
+            if path == "/admin/bugs":
+                action = body.get("action")
+                bug_id = body.get("id")
+                if action == "resolve" and bug_id is not None:
+                    db = auth._connect()
+                    db.execute("UPDATE bugs SET status='resolved' WHERE id=?", (int(bug_id),))
+                    db.commit()
+                    db.close()
+                    return self._json({"ok": True})
+                if action == "delete" and bug_id is not None:
+                    db = auth._connect()
+                    db.execute("DELETE FROM bugs WHERE id=?", (int(bug_id),))
+                    db.commit()
+                    db.close()
+                    return self._json({"ok": True})
+                return self._json({"error": "accion invalida (resolve|delete)"}, 400)
+            return self._json({"error": "not found"}, 404)
+        except Exception as e:
+            return self._json({"error": str(e)}, 500)
 
 def _qa_worker(job_id, body, username=None):
     def _set(phase=None, detail=None, pct=None, extra=None):
@@ -1084,7 +1386,7 @@ def _qa_worker(job_id, body, username=None):
         with QAJOBS_lock:
             QAJOBS[job_id] = {"phase": "error", "detail": str(e), "pct": 0, "elapsed_s": 0, "done": True, "error": str(e)}
 
-# --- Scraping status (dashboard /scraper/) ---
+# --- Admin: sistema (reutiliza scraping-status + LLM health) ---
 # El dashboard llama a GET /scraping-status (proxy: /conicet/status en el
 # nginx del CT). Devuelve conteos + timeline del estado del servidor OAI
 # (verde = scrape OK, rojo = error, gris = sin actividad).
@@ -1309,7 +1611,7 @@ def _host_lock():
     return False
 
 
-def _handle_scraping_status(self):
+def _scraping_status_data():
     now = time.time()
     meta = _load_metadata()
     total_items = len(meta)
@@ -1356,7 +1658,7 @@ def _handle_scraping_status(self):
     last_error_at = fails[-1][0] if fails else None
     last_down_at = wd_down[-1] if wd_down else None
 
-    return self._json({
+    return {
         "ok": True,
         "total_items": total_items,
         "pdfs_downloaded": pdfs,
@@ -1379,7 +1681,32 @@ def _handle_scraping_status(self):
             "last_error_at": last_error_at,
             "last_down_at": last_down_at,
         },
-    })
+    }
+
+
+def _handle_scraping_status(self):
+    return self._json(_scraping_status_data())
+
+
+def _llm_health():
+    """Llega el tracker/LLM? Probe mínimo a /v1/chat/completions con key inválida:
+    401/403 = servicio vivo (pide auth), 4xx/5xx = vivo pero con problema, timeout = caído."""
+    t0 = time.time()
+    try:
+        req = urllib.request.Request(
+            LLM_URL, method="POST",
+            data=json.dumps({"model": LLM_MODEL, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1}).encode(),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer __health__"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return {"ok": True, "url": LLM_URL, "model": LLM_MODEL, "latency_ms": int((time.time() - t0) * 1000), "http": r.status}
+    except urllib.error.HTTPError as e:
+        lat = int((time.time() - t0) * 1000)
+        if e.code in (401, 403):
+            return {"ok": True, "url": LLM_URL, "model": LLM_MODEL, "latency_ms": lat, "http": e.code, "note": "responde, pide auth (esperado)"}
+        return {"ok": False, "url": LLM_URL, "model": LLM_MODEL, "error": f"HTTP {e.code}", "latency_ms": lat}
+    except Exception as e:
+        return {"ok": False, "url": LLM_URL, "model": LLM_MODEL, "error": str(e), "latency_ms": int((time.time() - t0) * 1000)}
 
 
 def main():

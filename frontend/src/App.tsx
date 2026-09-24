@@ -158,7 +158,7 @@ const API_BASE = '/api/conicet';
 const TOKEN_KEY = 'pidtt-aec-token';
 const USER_KEY = 'pidtt-aec-user';
 
-type AuthUser = { token: string; username: string; display_name: string; must_change?: boolean };
+type AuthUser = { token: string; username: string; display_name: string; must_change?: boolean; role?: 'user' | 'admin' };
 
 function getAuth(): AuthUser | null {
   try {
@@ -387,6 +387,380 @@ function DetailPanel({
   );
 }
 
+function AdminTab({ apiFetch }: { apiFetch: (p: string, o?: RequestInit) => Promise<Response> }) {
+  const AXES = ['knowledge', 'reasoning', 'critical', 'adaptation', 'interaction', 'safety', 'authenticity'];
+  const [section, setSection] = useState<'usuarios' | 'coleccion' | 'bugs' | 'sistema'>('usuarios');
+  const [users, setUsers] = useState<any[]>([]);
+  const [newUser, setNewUser] = useState({ username: '', display_name: '', password: '' });
+  const [userMsg, setUserMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [usersLoading, setUsersLoading] = useState(false);
+
+  const [items, setItems] = useState<any[]>([]);
+  const [counts, setCounts] = useState({ total: 0, approved: 0, rejected: 0 });
+  const [cFilters, setCFilters] = useState({ username: '', axis: '', type: '', decision: '', q: '' });
+  const [delTarget, setDelTarget] = useState<string | null>(null); // "username|key"
+  const [delReason, setDelReason] = useState('');
+  const [delMsg, setDelMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const [bugs, setBugs] = useState<any[]>([]);
+  const [bugFilter, setBugFilter] = useState('open');
+  const [bugMsg, setBugMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const [stats, setStats] = useState<any | null>(null);
+  const [system, setSystem] = useState<any | null>(null);
+  const [sysErr, setSysErr] = useState('');
+
+  const loadUsers = async () => {
+    setUsersLoading(true); setUserMsg(null);
+    try {
+      const r = await apiFetch('/admin/users');
+      const d = await r.json();
+      if (!r.ok) setUserMsg({ ok: false, text: d.error || 'No se pudo cargar' });
+      else setUsers(d.users || []);
+    } catch (e: any) { setUserMsg({ ok: false, text: e.message }); }
+    setUsersLoading(false);
+  };
+
+  const userAction = async (action: string, payload: any) => {
+    try {
+      const r = await apiFetch('/admin/users', { method: 'POST', body: JSON.stringify({ action, ...payload }) });
+      const d = await r.json();
+      setUserMsg({ ok: r.ok, text: d.error || (action === 'create' ? 'Usuario creado' : 'Listo') });
+      if (r.ok) loadUsers();
+    } catch (e: any) { setUserMsg({ ok: false, text: e.message }); }
+  };
+
+  const loadCollection = async (f = cFilters) => {
+    const qs = new URLSearchParams(Object.fromEntries(Object.entries(f).filter(([, v]) => v))).toString();
+    try {
+      const r = await apiFetch('/admin/collection' + (qs ? '?' + qs : ''));
+      const d = await r.json();
+      if (!r.ok) setDelMsg({ ok: false, text: d.error || 'No se pudo cargar' });
+      else { setItems(d.items || []); setCounts({ total: d.total, approved: d.approved, rejected: d.rejected }); }
+    } catch (e: any) { setDelMsg({ ok: false, text: e.message }); }
+  };
+
+  const deleteItem = async () => {
+    if (!delTarget) return;
+    const [username, key] = delTarget.split('|');
+    try {
+      const r = await apiFetch('/admin/collection', { method: 'POST', body: JSON.stringify({ action: 'delete-item', username, key, reason: delReason }) });
+      const d = await r.json();
+      setDelMsg({ ok: r.ok, text: d.error || 'Item eliminado de la colección' });
+      setDelTarget(null); setDelReason('');
+      if (r.ok) loadCollection();
+    } catch (e: any) { setDelMsg({ ok: false, text: e.message }); }
+  };
+
+  const downloadExport = async (format: 'json' | 'csv') => {
+    try {
+      const r = await apiFetch(`/admin/collection/export?format=${format}`);
+      if (!r.ok) { setDelMsg({ ok: false, text: 'No se pudo exportar' }); return; }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `pidtt-aec-collection.${format}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) { setDelMsg({ ok: false, text: e.message }); }
+  };
+
+  const loadBugs = async (f = bugFilter) => {
+    try {
+      const r = await apiFetch('/admin/bugs' + (f ? '?status=' + f : ''));
+      const d = await r.json();
+      if (r.ok) setBugs(d.bugs || []);
+    } catch { /* ignore */ }
+  };
+
+  const bugAction = async (action: 'resolve' | 'delete', id: number) => {
+    try {
+      const r = await apiFetch('/admin/bugs', { method: 'POST', body: JSON.stringify({ action, id }) });
+      const d = await r.json();
+      setBugMsg({ ok: r.ok, text: d.error || (action === 'resolve' ? 'Bug marcado como resuelto' : 'Bug eliminado') });
+      if (r.ok) loadBugs();
+    } catch (e: any) { setBugMsg({ ok: false, text: e.message }); }
+  };
+
+  const loadSystem = async () => {
+    setSysErr('');
+    try {
+      const [rs, rx] = await Promise.all([apiFetch('/admin/stats'), apiFetch('/admin/system')]);
+      const [ds, dx] = await Promise.all([rs.json(), rx.json()]);
+      if (rs.ok) setStats(ds);
+      if (rx.ok) setSystem(dx);
+      else setSysErr(dx.error || 'Error');
+    } catch (e: any) { setSysErr(e.message); }
+  };
+
+  useEffect(() => {
+    if (section === 'usuarios') loadUsers();
+    if (section === 'coleccion') loadCollection();
+    if (section === 'bugs') loadBugs();
+    if (section === 'sistema') loadSystem();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section]);
+
+  const fmtTs = (t?: number) => (t ? new Date(t * 1000).toLocaleString() : '—');
+  const fmtTsISO = (s?: string) => (s ? new Date(s).toLocaleString() : '—');
+
+  return (
+    <div className="tab-panel admin-panel">
+      <div className="admin-subtabs" role="tablist" aria-label="Secciones de administración">
+        {([['usuarios', '👥 Usuarios'], ['coleccion', '📚 Colección'], ['bugs', '🐞 Bugs'], ['sistema', '📡 Sistema']] as const).map(([id, label]) => (
+          <button key={id} type="button" className={`admin-subtab${section === id ? ' active' : ''}`} onClick={() => setSection(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {section === 'usuarios' && (
+        <div className="admin-section">
+          <div className="admin-section-head">
+            <h3>Usuarios ({users.length})</h3>
+            <button type="button" className="btn-link" onClick={loadUsers}>↻ Recargar</button>
+          </div>
+          {userMsg && <div className={userMsg.ok ? 'qa-restored-banner' : 'error'} role="status">{userMsg.text}</div>}
+          <form
+            className="admin-create-form"
+            onSubmit={e => { e.preventDefault(); if (newUser.username && newUser.password) userAction('create', newUser); setNewUser({ username: '', display_name: '', password: '' }); }}
+          >
+            <input className="input" placeholder="username" value={newUser.username} onChange={e => setNewUser({ ...newUser, username: e.target.value })} />
+            <input className="input" placeholder="nombre completo" value={newUser.display_name} onChange={e => setNewUser({ ...newUser, display_name: e.target.value })} />
+            <input className="input" type="password" placeholder="contraseña (mín 8, con número)" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} />
+            <button type="submit" className="btn-generate" disabled={!newUser.username || !newUser.password}>Crear</button>
+          </form>
+          {usersLoading ? <div className="loading" aria-hidden="true" /> : (
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th>Contraseña</th><th>Último acceso</th><th>Creado</th><th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.username} className={u.disabled ? 'row-disabled' : ''}>
+                    <td>{u.username}</td>
+                    <td>{u.display_name}</td>
+                    <td>
+                      <button type="button" className="badge-btn" title="Cambiar rol"
+                        onClick={() => userAction('set-role', { username: u.username, role: u.role === 'admin' ? 'user' : 'admin' })}>
+                        {u.role === 'admin' ? '🛡️ admin' : 'user'}
+                      </button>
+                    </td>
+                    <td>
+                      <button type="button" className="badge-btn" title="Habilitar/deshabilitar"
+                        onClick={() => userAction('set-disabled', { username: u.username, value: !u.disabled })}>
+                        {u.disabled ? '🚫 deshabilitado' : '✅ activo'}
+                      </button>
+                    </td>
+                    <td>{u.must_change ? '⚠️ sin cambiar' : 'ok'}</td>
+                    <td>{u.last_login ? fmtTs(u.last_login) : 'nunca'}</td>
+                    <td>{fmtTs(u.created_at)}</td>
+                    <td className="admin-actions">
+                      <button type="button" className="btn-link" title="Reiniciar contraseña"
+                        onClick={() => { const p = window.prompt(`Nueva contraseña para ${u.username} (mín 8, con número); quedará obligada a cambiarla al entrar:`); if (p) userAction('reset-password', { username: u.username, new_password: p }); }}>
+                        🔑 Reset
+                      </button>
+                      <button type="button" className="btn-link" title="Marcar/no marcar como pendiente de cambio de contraseña"
+                        onClick={() => userAction('set-must-change', { username: u.username, value: !u.must_change })}>
+                        {u.must_change ? 'liberar' : 'marcar'}
+                      </button>
+                      <button type="button" className="btn-link danger" title="Eliminar usuario (borra también su biblioteca, P&R y lotes)"
+                        onClick={() => window.confirm(`¿Eliminar a ${u.username}? Se borran sus datos. Esta acción no se puede deshacer.`) && userAction('delete', { username: u.username })}>
+                        🗑
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {section === 'coleccion' && (
+        <div className="admin-section">
+          <div className="admin-section-head">
+            <h3>Colección global — {counts.total} items ({counts.approved} aprobadas, {counts.rejected} descartadas)</h3>
+            <div className="admin-export">
+              <button type="button" className="btn-link" onClick={() => downloadExport('json')}>⬇ JSON</button>
+              <button type="button" className="btn-link" onClick={() => downloadExport('csv')}>⬇ CSV</button>
+              <button type="button" className="btn-link" onClick={() => loadCollection()}>↻</button>
+            </div>
+          </div>
+          <div className="admin-filters">
+            <input className="input" placeholder="usuario" value={cFilters.username} onChange={e => { const v = e.target.value; setCFilters({ ...cFilters, username: v }); loadCollection({ ...cFilters, username: v }); }} />
+            <select className="input" value={cFilters.axis} onChange={e => { const v = e.target.value; setCFilters({ ...cFilters, axis: v }); loadCollection({ ...cFilters, axis: v }); }}>
+              <option value="">todos los ejes</option>
+              {AXES.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+            <select className="input" value={cFilters.type} onChange={e => { const v = e.target.value; setCFilters({ ...cFilters, type: v }); loadCollection({ ...cFilters, type: v }); }}>
+              <option value="">todos los tipos</option>
+              <option value="open-ended">abierta</option>
+              <option value="mcq">opción múltiple</option>
+              <option value="scenario">escenario</option>
+            </select>
+            <select className="input" value={cFilters.decision} onChange={e => { const v = e.target.value; setCFilters({ ...cFilters, decision: v }); loadCollection({ ...cFilters, decision: v }); }}>
+              <option value="">todas las decisiones</option>
+              <option value="approved">aprobadas</option>
+              <option value="rejected">descartadas</option>
+            </select>
+            <input className="input admin-search" placeholder="buscar texto…" value={cFilters.q}
+              onChange={e => { const v = e.target.value; setCFilters({ ...cFilters, q: v }); if (v.length === 0 || v.length >= 3) loadCollection({ ...cFilters, q: v }); }} />
+          </div>
+          {delMsg && <div className={delMsg.ok ? 'qa-restored-banner' : 'error'} role="status">{delMsg.text}</div>}
+          <div className="admin-items">
+            {items.length === 0 && <div className="empty-state">No hay items con esos filtros.</div>}
+            {items.map(it => {
+              const target = `${it.username}|${it.key}`;
+              return (
+                <details key={target} className="admin-item">
+                  <summary>
+                    <span className={`badge-decision ${it.d === 'approved' ? 'ok' : it.d === 'rejected' ? 'no' : ''}`}>{it.d === 'approved' ? '✓ aprobada' : it.d === 'rejected' ? '✕ descartada' : 'sin decidir'}</span>
+                    <span className="admin-item-user">@{it.username}</span>
+                    {it.cultural_axis && <span className="admin-item-axis">{it.cultural_axis}</span>}
+                    <span className="admin-item-q">{(it.q || '').slice(0, 140)}</span>
+                  </summary>
+                  <div className="admin-item-body">
+                    <p><strong>P:</strong> {it.q}</p>
+                    {it.a && <p><strong>R:</strong> {it.a}</p>}
+                    {Array.isArray(it.options) && it.options.length > 0 && <p><strong>Op:</strong> {it.options.map((o: string, i: number) => `${String.fromCharCode(65 + i)}) ${o}${it.correct === String.fromCharCode(65 + i) ? ' ✔' : ''}`).join(' · ')}</p>}
+                    {it.scenario && <p><strong>Escenario:</strong> {it.scenario}</p>}
+                    {it.cite && <p className="admin-item-cite"><strong>Cita:</strong> «{it.cite}»</p>}
+                    {Array.isArray(it.article_ids) && it.article_ids.length > 0 && <p className="admin-item-ids">Fuentes: {it.article_ids.join(', ')}</p>}
+                    <p className="admin-item-meta">guardada: {fmtTs(it.ts)}</p>
+                    {delTarget === target ? (
+                      <div className="admin-item-delete">
+                        <input className="input" placeholder="motivo de la moderación (opcional)" value={delReason} onChange={e => setDelReason(e.target.value)} />
+                        <button type="button" className="btn-generate" onClick={deleteItem}>Confirmar eliminación</button>
+                        <button type="button" className="btn-link" onClick={() => { setDelTarget(null); setDelReason(''); setDelMsg(null); }}>Cancelar</button>
+                      </div>
+                    ) : (
+                      <button type="button" className="btn-link danger" onClick={() => { setDelTarget(target); setDelReason(''); setDelMsg(null); }}>
+                        🗑 Moderar: eliminar de la colección
+                      </button>
+                    )}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {section === 'bugs' && (
+        <div className="admin-section">
+          <div className="admin-section-head">
+            <h3>Reportes de bug</h3>
+            <div className="admin-export">
+              <button type="button" className={`badge-btn${bugFilter === 'open' ? ' on' : ''}`} onClick={() => { setBugFilter('open'); loadBugs('open'); }}>abiertos</button>
+              <button type="button" className={`badge-btn${bugFilter === 'resolved' ? ' on' : ''}`} onClick={() => { setBugFilter('resolved'); loadBugs('resolved'); }}>resueltos</button>
+              <button type="button" className={`badge-btn${bugFilter === '' ? ' on' : ''}`} onClick={() => { setBugFilter(''); loadBugs(''); }}>todos</button>
+              <button type="button" className="btn-link" onClick={() => loadBugs()}>↻</button>
+            </div>
+          </div>
+          {bugMsg && <div className={bugMsg.ok ? 'qa-restored-banner' : 'error'} role="status">{bugMsg.text}</div>}
+          <div className="admin-items">
+            {bugs.length === 0 && <div className="empty-state">Sin reportes en esta vista. 🎉</div>}
+            {bugs.map(b => (
+              <details key={b.id} className="admin-item">
+                <summary>
+                  <span className={`badge-decision ${b.status === 'open' ? 'no' : 'ok'}`}>{b.status === 'open' ? 'abierto' : 'resuelto'}</span>
+                  <span className="admin-item-user">@{b.username}</span>
+                  <span className="admin-item-q">{(b.text || '').slice(0, 140)}</span>
+                </summary>
+                <div className="admin-item-body">
+                  <p>{b.text}</p>
+                  <p className="admin-item-meta">{fmtTs(b.created_at)}</p>
+                  {b.status === 'open' && (
+                    <button type="button" className="btn-link" onClick={() => bugAction('resolve', b.id)}>✓ Marcar resuelto</button>
+                  )}
+                  <button type="button" className="btn-link danger" onClick={() => window.confirm('¿Borrar este reporte?') && bugAction('delete', b.id)}>🗑 Borrar</button>
+                </div>
+              </details>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {section === 'sistema' && (
+        <div className="admin-section">
+          <div className="admin-section-head">
+            <h3>Estado del sistema</h3>
+            <button type="button" className="btn-link" onClick={loadSystem}>↻ Recargar</button>
+          </div>
+          {sysErr && <div className="error" role="alert">{sysErr}</div>}
+          <div className="admin-cards">
+            {stats && (
+              <div className="admin-card">
+                <h4>Actividad</h4>
+                <dl>
+                  <div><dt>Usuarios</dt><dd>{stats.users}</dd></div>
+                  <div><dt>Curando (con P&R)</dt><dd>{stats.curators}</dd></div>
+                  <div><dt>Aprobadas</dt><dd>{stats.approved}</dd></div>
+                  <div><dt>Descartadas</dt><dd>{stats.rejected}</dd></div>
+                  <div><dt>Bugs abiertos</dt><dd>{stats.open_bugs}</dd></div>
+                  <div><dt>Jobs activos</dt><dd>{stats.active_jobs}</dd></div>
+                  <div><dt>Publicaciones indexadas</dt><dd>{stats.metadata_items}</dd></div>
+                </dl>
+              </div>
+            )}
+            {stats && Object.keys(stats.per_user || {}).length > 0 && (
+              <div className="admin-card">
+                <h4>Por usuario</h4>
+                <table className="admin-table">
+                  <thead><tr><th>Usuario</th><th>Aprobadas</th><th>Descartadas</th><th>Total</th></tr></thead>
+                  <tbody>
+                    {Object.entries(stats.per_user).map(([u, v]: [string, any]) => (
+                      <tr key={u}><td>{u}</td><td>{v.approved}</td><td>{v.rejected}</td><td>{v.total}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {system?.scraper && (
+              <div className="admin-card">
+                <h4>Scraper</h4>
+                <dl>
+                  <div><dt>Última actualización</dt><dd>{fmtTsISO(system.scraper.updated_at)}</dd></div>
+                  <div><dt>Crawl activo</dt><dd>{system.scraper.crawl_active ? 'sí' : 'no'}</dd></div>
+                  <div><dt>PDFs</dt><dd>{system.scraper.pdfs_downloaded}</dd></div>
+                  <div><dt>Último error</dt><dd>{system.scraper.timeline?.last_error || '—'}</dd></div>
+                </dl>
+              </div>
+            )}
+            {system?.llm && (
+              <div className="admin-card">
+                <h4>LLM (tracker)</h4>
+                <dl>
+                  <div><dt>Disponibilidad</dt><dd>{system.llm.ok ? '✅ responde' : `❌ ${system.llm.error || 'caído'}`}</dd></div>
+                  <div><dt>Latencia</dt><dd>{system.llm.latency_ms != null ? `${system.llm.latency_ms} ms` : '—'}</dd></div>
+                  <div><dt>Modelo</dt><dd>{system.llm.model}</dd></div>
+                </dl>
+              </div>
+            )}
+            {system && (system.active_jobs?.length || system.recent_errors?.length) > 0 && (
+              <div className="admin-card">
+                <h4>Jobs de generación</h4>
+                {system.active_jobs?.length > 0 && (
+                  <table className="admin-table">
+                    <thead><tr><th>Job</th><th>Fase</th><th>Detalle</th></tr></thead>
+                    <tbody>
+                      {system.active_jobs.map((j: any) => <tr key={j.job_id}><td>{j.job_id.slice(0, 8)}…</td><td>{j.phase}</td><td>{j.detail}</td></tr>)}
+                    </tbody>
+                  </table>
+                )}
+                {system.recent_errors?.length > 0 && <p className="admin-item-meta">Últimos errores: {system.recent_errors.length}</p>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   // ==== MOVIDOS DENTRO DE APP: estado y efectos de auth (antes estaban a nivel de módulo) ====
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -398,7 +772,7 @@ function App() {
     const a = getAuth();
     if (a) {
       apiFetch('/auth/me').then(r => r.ok ? r.json() : Promise.reject())
-        .then(d => { const u = { ...a, must_change: !!d.must_change }; setAuth(u); setAuthUser(u); })
+        .then(d => { const u = { ...a, must_change: !!d.must_change, role: d.role === 'admin' ? 'admin' : 'user' }; setAuth(u); setAuthUser(u); })
         .catch(() => { clearAuth(); setAuthUser(null); });
     }
   }, []);
@@ -410,7 +784,7 @@ function App() {
       const r = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify({ username: loginUser, password: loginPass }) });
       if (!r.ok) throw new Error('Credenciales inválidas');
       const data = await r.json();
-      const u = { token: data.token, username: data.username, display_name: data.display_name, must_change: !!data.must_change };
+      const u = { token: data.token, username: data.username, display_name: data.display_name, must_change: !!data.must_change, role: data.role === 'admin' ? 'admin' : 'user' } as AuthUser;
       setAuth(u);
       setAuthUser(u);
       setLoginPass('');
@@ -488,7 +862,7 @@ function App() {
   const [libraryOnly, setLibraryOnly] = useState(false);
 
   // Tabs: "fuentes" | "generacion" | "chat"
-  const [activeTab, setActiveTab] = useState<'fuentes' | 'generacion' | 'chat'>('fuentes');
+  const [activeTab, setActiveTab] = useState<'fuentes' | 'generacion' | 'chat' | 'admin'>('fuentes');
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<{role: 'user' | 'assistant'; content: string}[]>([]);
@@ -1377,6 +1751,18 @@ function App() {
             <span className="tab-icon">💬</span>
             <span>Chat</span>
           </button>
+          {authUser?.role === 'admin' && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'admin'}
+              className={`tab-btn${activeTab === 'admin' ? ' active' : ''}`}
+              onClick={() => setActiveTab('admin')}
+            >
+              <span className="tab-icon">🛡️</span>
+              <span>Admin</span>
+            </button>
+          )}
         </div>
 
         {/* ── Tab Fuentes ── */}
@@ -2691,6 +3077,10 @@ function App() {
               />
             </div>
           </div>
+        )}
+
+        {activeTab === 'admin' && authUser?.role === 'admin' && (
+          <AdminTab apiFetch={apiFetch} />
         )}
 
         {loading && data && <div className="loading" aria-hidden="true" />}
