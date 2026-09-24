@@ -482,6 +482,9 @@ function App() {
 
   // Biblioteca de usuario
   const [library, setLibrary] = useState<string[]>([]);
+  // Títulos de la biblioteca (id→título), independiente de la página de
+  // búsqueda activa — así los paneles siempre muestran título, no id.
+  const [libTitles, setLibTitles] = useState<Record<string, string>>({});
   const [libraryOnly, setLibraryOnly] = useState(false);
 
   // Tabs: "fuentes" | "generacion" | "chat"
@@ -995,12 +998,22 @@ function App() {
 
   // ==== Biblioteca: cargar al login y cuando cambia el usuario ====
   const loadLibrary = async () => {
-    if (!authUser) { setLibrary([]); return; }
+    if (!authUser) { setLibrary([]); setLibTitles({}); return; }
     try {
       const r = await apiFetch('/library');
       const d = await r.json();
-      if (r.ok) setLibrary(d.ids || []);
+      if (r.ok) {
+        setLibrary(d.ids || []);
+        setLibTitles(d.titles || {});
+      }
     } catch { setLibrary([]); }
+  };
+
+  // Título de un id de la biblioteca: prefiere la página de búsqueda visible,
+  // luego el mapa de títulos del backend, y por último el id (último recurso).
+  const libraryTitle = (id: string): string => {
+    const doc = data?.results.find(r => r.id === id);
+    return doc?.title || libTitles[id] || id;
   };
 
   useEffect(() => {
@@ -1022,11 +1035,14 @@ function App() {
         body: JSON.stringify({ action, ids: [id] }),
       });
       const d = await r.json();
-      if (r.ok) setLibrary(d.ids || []);
+      if (r.ok) {
+        setLibrary(d.ids || []);
+        setLibTitles(d.titles || {});
+      }
     } catch { /* ignore */ }
   };
 
-  const isItemInLibrary = (id: string) => library.includes(id);
+  const isItemInLibrary = (id: string): boolean => library.includes(id);
 
   const searchRelated = async () => {
     setRelatedLoading(true);
@@ -1589,11 +1605,10 @@ function App() {
                         </div>
                         <div className="library-list">
                           {library.slice(0, 8).map((id) => {
-                            const doc = data?.results.find(r => r.id === id);
                             return (
                               <div key={id} className="library-item">
-                                <span className="library-item-title" title={doc?.title || id}>
-                                  {doc?.title || id}
+                                <span className="library-item-title" title={libraryTitle(id)}>
+                                  {libraryTitle(id)}
                                 </span>
                                 <button
                                   type="button"
@@ -1875,17 +1890,17 @@ function App() {
                         </p>
                         <div className="sources-selected-list">
                           {library.slice(0, 12).map((id) => {
-                            const doc = data?.results.find(r => r.id === id);
                             const marked = genSources.has(id);
+                            const title = libraryTitle(id);
                             return (
                               <span
                                 key={id}
                                 className={`source-tag${marked ? ' marked' : ''}`}
-                                title={doc?.title || id}
+                                title={title}
                                 onClick={() => setGenSources(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; })}
                               >
                                 <span className="source-tag-check" aria-hidden="true">{marked ? '✓' : ''}</span>
-                                <span className="source-tag-title">{doc?.title || id}</span>
+                                <span className="source-tag-title">{title}</span>
                                 <button
                                   type="button"
                                   className="source-tag-remove"

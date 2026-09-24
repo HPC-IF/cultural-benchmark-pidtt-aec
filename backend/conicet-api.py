@@ -440,10 +440,14 @@ class Handler(BaseHTTPRequestHandler):
         return self._do_related(ids, limit)
 
     def _handle_library_get(self, username):
-        """GET /library — devuelve la biblioteca del usuario."""
+        """GET /library — devuelve la biblioteca del usuario (ids + títulos)."""
         with _library_lock:
             ids = _load_library(username)
-        return self._json({"ids": ids, "total": len(ids)})
+        # Mapa id→título para que el frontend muestre títulos sin depender
+        # de la página actual de resultados de búsqueda.
+        meta_map = {d["id"]: d.get("title", "") for d in _load_metadata()}
+        titles = {i: meta_map[i] for i in ids if i in meta_map}
+        return self._json({"ids": ids, "total": len(ids), "titles": titles})
 
     def _handle_library_post(self, username):
         """POST /library — modifica la biblioteca del usuario.
@@ -471,7 +475,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "accion invalida (add|remove|set)"}, 400)
             _save_library(username, list(current_set))
             new_ids = _load_library(username)
-        return self._json({"ids": new_ids, "total": len(new_ids)})
+        meta_map = {d["id"]: d.get("title", "") for d in _load_metadata()}
+        titles = {i: meta_map[i] for i in new_ids if i in meta_map}
+        return self._json({"ids": new_ids, "total": len(new_ids), "titles": titles})
 
     def _handle_qa_store_get(self, username):
         """GET /qa-store — devuelve las P&R guardadas (aprobadas/descartadas) del usuario."""
