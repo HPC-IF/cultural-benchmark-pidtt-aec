@@ -4100,3 +4100,70 @@ body {
 .admin-card dl { margin: 0; display: flex; flex-direction: column; gap: 4px; }
 .admin-card dl div { display: flex; justify-content: space-between; gap: 12px; font-size: 0.88rem; }
 .admin-card dd { margin: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+
+/* ══ Tab Validación (split estilo mensajería) ══ */
+.val-wrap { display: flex; flex-direction: column; gap: 10px; }
+.val-progress { display: flex; flex-direction: column; gap: 6px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
+.val-meter { height: 8px; background: var(--brand-bg); border-radius: 99px; overflow: hidden; }
+.val-meter i { display: block; height: 100%; background: var(--brand); border-radius: 99px; transition: width .3s; }
+.val-kpis { display: flex; gap: 14px; flex-wrap: wrap; font-size: .82rem; color: var(--ink-soft); }
+.val-kpis b { color: var(--brand-deep); }
+.val-layout { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 12px; align-items: start; }
+@media (max-width: 860px) { .val-layout { grid-template-columns: 1fr; } }
+
+.val-list { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; max-height: calc(100vh - 220px); display: flex; flex-direction: column; position: sticky; top: 70px; }
+.val-list-head { padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--surface); display: flex; align-items: center; gap: 8px; }
+.val-list-head h3 { font-size: .88rem; flex: 1; }
+.val-select { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: .8rem; background: var(--card); color: inherit; }
+.val-list .val-input { margin: 8px 10px 6px; width: calc(100% - 20px); }
+.val-chips { display: flex; gap: 5px; padding: 0 10px 8px; flex-wrap: wrap; }
+.val-chip { border: 1px solid var(--line-strong); background: var(--card); border-radius: 99px; padding: 3px 10px; font-size: .72rem; cursor: pointer; color: var(--ink-soft); }
+.val-chip.on { background: var(--brand-soft); border-color: var(--brand); color: var(--brand-deep); font-weight: 600; }
+.val-rows { flex: 1; overflow-y: auto; }
+.val-row { padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; border-left: 3px solid transparent; }
+.val-row:hover { background: var(--surface-hover); }
+.val-row.sel { background: var(--brand-soft); border-left-color: var(--brand); }
+.val-row-q { font-size: .83rem; margin-bottom: 5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.val-row-meta { display: flex; gap: 6px; align-items: center; font-size: .72rem; color: var(--ink-muted); flex-wrap: wrap; }
+.val-st { font-weight: 700; font-size: .78rem; }
+.val-st.ok { color: var(--ok); } .val-st.no { color: var(--danger); } .val-st.pend { color: var(--ink-muted); }
+.val-flag { color: var(--gold); }
+.val-ax { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1px 7px; font-size: .68rem; }
+.val-ax.big { font-size: .78rem; padding: 3px 10px; font-weight: 600; background: var(--brand-soft); border-color: var(--brand); color: var(--brand-deep); }
+.val-user { }
+.val-votes { margin-left: auto; }
+
+.val-detail { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; max-height: calc(100vh - 220px); overflow-y: auto; }
+.val-detail-head { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.val-curator { font-size: .8rem; color: var(--ink-muted); margin-left: auto; }
+.val-q { font-size: 1.14rem; font-weight: 600; margin-bottom: 12px; }
+.val-a { background: var(--surface); border-left: 3px solid var(--brand); padding: 11px 13px; border-radius: 0 8px 8px 0; margin-bottom: 12px; white-space: pre-wrap; }
+.val-opts { display: grid; gap: 6px; margin-bottom: 12px; }
+.val-opt { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: .9rem; background: var(--card); }
+.val-opt.correct { border-color: var(--correct); background: var(--correct-bg); }
+.val-opt.correct::before { content: "✔ "; color: var(--correct); font-weight: 700; }
+.val-scenario { font-size: .9rem; margin-bottom: 12px; color: var(--ink-soft); }
+.val-cite { font-size: .84rem; color: var(--ink-muted); font-style: italic; border-top: 1px dashed var(--line); padding-top: 10px; margin-bottom: 12px; }
+.val-cite b { color: var(--ink-soft); font-style: normal; }
+.val-ids { font-size: .78rem; color: var(--ink-muted); margin-bottom: 12px; }
+
+.val-votes-box { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 14px; }
+.val-votes-box h4 { font-size: .82rem; margin-bottom: 8px; color: var(--ink-soft); }
+.val-novote { font-size: .82rem; color: var(--ink-muted); }
+.val-vote-row { display: flex; gap: 8px; align-items: center; font-size: .85rem; padding: 4px 0; flex-wrap: wrap; }
+.val-dot { width: 10px; height: 10px; border-radius: 99px; display: inline-block; flex: none; }
+.val-dot.ok { background: var(--ok); } .val-dot.no { background: var(--danger); } .val-dot.pend { background: var(--gold); }
+.val-vote-lbl { color: var(--ink-soft); }
+.val-vote-cmt { color: var(--ink-muted); font-size: .8rem; font-style: italic; }
+
+.val-decision { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; position: sticky; bottom: 0; background: var(--card); border-top: 1px solid var(--line); padding-top: 12px; }
+.val-btn { border: none; border-radius: 8px; padding: 10px 16px; font-size: .92rem; cursor: pointer; font-weight: 600; background: var(--surface); color: var(--ink-soft); border: 1px solid var(--line-strong); }
+.val-btn:hover { background: var(--surface-hover); }
+.val-btn.on-ok { background: var(--ok); color: #fff; border-color: var(--ok); }
+.val-btn.on-no { background: var(--danger); color: #fff; border-color: var(--danger); }
+.val-btn-ghost { background: none; border: none; color: var(--ink-muted); cursor: pointer; font-size: .82rem; text-decoration: underline; }
+.val-decision .val-input { flex: 1; min-width: 160px; margin: 0; width: auto; }
+
+.val-empty { padding: 22px 14px; font-size: .85rem; color: var(--ink-muted); text-align: center; }
+.val-empty.big { padding: 60px 20px; }
+.val-toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); background: var(--header-bg); color: #fff; padding: 10px 18px; border-radius: 99px; font-size: .9rem; box-shadow: var(--shadow); z-index: 60; }

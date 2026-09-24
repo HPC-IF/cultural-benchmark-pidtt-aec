@@ -761,6 +761,194 @@ function AdminTab({ apiFetch }: { apiFetch: (p: string, o?: RequestInit) => Prom
   );
 }
 
+function ValidationTab({ apiFetch, username }: { apiFetch: (p: string, o?: RequestInit) => Promise<Response>; username: string }) {
+  const AXES = ['knowledge', 'reasoning', 'critical', 'adaptation', 'interaction', 'safety', 'authenticity'];
+  const [stats, setStats] = useState<any | null>(null);
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [axis, setAxis] = useState('');
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState('');
+  const [sel, setSel] = useState<string | null>(null);
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState('');
+
+  const showToast = (t: string) => { setToast(t); window.clearTimeout((showToast as any)._t); (showToast as any)._t = window.setTimeout(() => setToast(''), 2200); };
+
+  const loadStats = async () => {
+    try { const r = await apiFetch('/validation/stats'); const d = await r.json(); if (r.ok) setStats(d); } catch { /* ignore */ }
+  };
+  const loadItems = async (a = axis, st = status, qq = q) => {
+    const params = new URLSearchParams();
+    if (a) params.set('axis', a);
+    if (st) params.set('status', st);
+    if (qq && qq.length >= 2) params.set('q', qq);
+    const qs = params.toString();
+    try {
+      const r = await apiFetch('/validation' + (qs ? '?' + qs : ''));
+      const d = await r.json();
+      if (r.ok) setItems(d.items || []);
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { loadStats(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setLoading(true);
+    loadItems();
+    setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [axis, status]);
+
+  const selItem = items.find(i => i.key === sel) || null;
+
+  const vote = async (v: 'ok' | 'no') => {
+    if (!selItem || busy) return;
+    setBusy(true);
+    const prevItems = items; const prevStats = stats;
+    // optimista
+    setItems(items.map(i => i.key === sel ? { ...i, my_vote: v } : i));
+    try {
+      const r = await apiFetch('/validation', { method: 'POST', body: JSON.stringify({ action: 'vote', key: sel, vote: v, comment }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'no se pudo guardar');
+      setComment('');
+      showToast(v === 'ok' ? '✓ Aprobada' : '✕ Descartada');
+      loadStats(); loadItems();
+    } catch (e: any) {
+      setItems(prevItems); setStats(prevStats);
+      showToast('Error: ' + e.message);
+    }
+    setBusy(false);
+  };
+
+  const clearVote = async () => {
+    if (!selItem || busy) return;
+    setBusy(true);
+    const prevItems = items;
+    setItems(items.map(i => i.key === sel ? { ...i, my_vote: null } : i));
+    try {
+      const r = await apiFetch('/validation', { method: 'POST', body: JSON.stringify({ action: 'clear', key: sel }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'no se pudo');
+      loadStats(); loadItems();
+    } catch (e: any) {
+      setItems(prevItems); showToast('Error: ' + e.message);
+    }
+    setBusy(false);
+  };
+
+  const progress = stats ? (stats.pool_total ? Math.round(100 * stats.my_done / stats.pool_total) : 0) : 0;
+
+  return (
+    <div className="val-wrap">
+      {/* franja de estado */}
+      <div className="val-progress">
+        <div className="val-meter"><i style={{ width: `${progress}%` }} /></div>
+        <div className="val-kpis">
+          <span><b>{stats?.my_done ?? '—'}</b>/{stats?.pool_total ?? '—'} revisadas por vos</span>
+          <span>· <b>{stats?.my_pending ?? '—'}</b> pendientes</span>
+          <span>· <b>{stats?.disagree ?? '—'}</b> en desacuerdo</span>
+          <span>· consenso {stats?.consensus != null ? <b>{stats.consensus}%</b> : '—'}</span>
+        </div>
+      </div>
+
+      <div className="val-layout">
+        {/* ── lista ── */}
+        <div className="val-list">
+          <div className="val-list-head">
+            <h3>Pool aprobada — <span>{items.length}</span> items</h3>
+            <select className="val-select" value={axis} onChange={e => setAxis(e.target.value)} aria-label="Filtrar por eje">
+              <option value="">todos los ejes</option>
+              {AXES.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+          <input className="val-input" type="search" placeholder="Buscar en preguntas…" value={q}
+            onChange={e => { const v = e.target.value; setQ(v); if (v.length === 0 || v.length >= 2) loadItems(axis, status, v); }} />
+          <div className="val-chips">
+            {[['', 'todas'], ['pend', '⏳ me faltan'], ['done', '✓ revisadas'], ['disagree', '⚡ desacuerdo']].map(([v, l]) => (
+              <button key={v} type="button" className={`val-chip${status === v ? ' on' : ''}`} onClick={() => setStatus(v)}>{l}</button>
+            ))}
+          </div>
+          <div className="val-rows">
+            {loading && <div className="val-empty">Cargando…</div>}
+            {!loading && items.length === 0 && <div className="val-empty">Sin items con esos filtros.</div>}
+            {items.map(it => {
+              const isSel = it.key === sel;
+              const stClass = it.my_vote === 'ok' ? 'ok' : it.my_vote === 'no' ? 'no' : 'pend';
+              const stLabel = it.my_vote === 'ok' ? '✓' : it.my_vote === 'no' ? '✕' : '…';
+              return (
+                <div key={it.key} className={`val-row${isSel ? ' sel' : ''}`} onClick={() => { setSel(it.key); setComment(''); }}>
+                  <div className="val-row-q">{it.q}</div>
+                  <div className="val-row-meta">
+                    <span className={`val-st ${stClass}`}>{stLabel}</span>
+                    {it.disagree && <span className="val-flag">⚡</span>}
+                    {it.cultural_axis && <span className="val-ax">{it.cultural_axis}</span>}
+                    <span className="val-user">@{it.username}</span>
+                    <span className="val-votes">{it.ok_count}✓ {it.no_count}✕</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── detalle ── */}
+        <div className="val-detail">
+          {!selItem ? (
+            <div className="val-empty big">Elegí una P&R de la lista para validarla. 👈</div>
+          ) : (
+            <>
+              <div className="val-detail-head">
+                {selItem.cultural_axis && <span className="val-ax big">{selItem.cultural_axis}</span>}
+                <span className="val-curator">curada por @{selItem.username}</span>
+              </div>
+              <div className="val-q">{selItem.q}</div>
+              {selItem.a && <div className="val-a">{selItem.a}</div>}
+              {Array.isArray(selItem.options) && selItem.options.length > 0 && (
+                <div className="val-opts">
+                  {selItem.options.map((o: string, i: number) => {
+                    const letter = String.fromCharCode(65 + i);
+                    const isCorrect = selItem.correct === letter;
+                    return <div key={i} className={`val-opt${isCorrect ? ' correct' : ''}`}>{letter}) {o}</div>;
+                  })}
+                </div>
+              )}
+              {selItem.scenario && <div className="val-scenario"><b>Escenario:</b> {selItem.scenario}</div>}
+              {selItem.cite && <div className="val-cite"><b>Cita verbatim:</b> «{selItem.cite}»</div>}
+              {Array.isArray(selItem.article_ids) && selItem.article_ids.length > 0 && (
+                <div className="val-ids">Fuentes: {selItem.article_ids.join(', ')}</div>
+              )}
+
+              <div className="val-votes-box">
+                <h4>Votos del equipo ({Object.keys(selItem.votes || {}).length})</h4>
+                {Object.keys(selItem.votes || {}).length === 0 && <div className="val-novote">Todavía nadie votó este item.</div>}
+                {Object.entries(selItem.votes || {}).map(([n, v]: [string, any]) => (
+                  <div key={n} className="val-vote-row">
+                    <span className={`val-dot ${v.v === 'ok' ? 'ok' : v.v === 'no' ? 'no' : 'pend'}`} />
+                    <b>{n === username ? 'vos' : n}</b>
+                    <span className="val-vote-lbl">{v.v === 'ok' ? 'aprobó' : v.v === 'no' ? 'descartó' : 'pendiente'}</span>
+                    {v.comment && <span className="val-vote-cmt">— {v.comment}</span>}
+                  </div>
+                ))}
+              </div>
+
+              <div className="val-decision">
+                <button type="button" className={`val-btn ${selItem.my_vote === 'ok' ? 'on-ok' : ''}`} disabled={busy} onClick={() => vote('ok')}>✓ Aprobada</button>
+                <button type="button" className={`val-btn ${selItem.my_vote === 'no' ? 'on-no' : ''}`} disabled={busy} onClick={() => vote('no')}>✕ Descartada</button>
+                {selItem.my_vote && <button type="button" className="val-btn-ghost" disabled={busy} onClick={clearVote}>Quitar mi voto</button>}
+                <input className="val-input" type="text" placeholder="Comentario para el equipo (opcional)" value={comment} onChange={e => setComment(e.target.value)} />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {toast && <div className="val-toast" role="status">{toast}</div>}
+    </div>
+  );
+}
+
 function App() {
   // ==== MOVIDOS DENTRO DE APP: estado y efectos de auth (antes estaban a nivel de módulo) ====
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -862,7 +1050,7 @@ function App() {
   const [libraryOnly, setLibraryOnly] = useState(false);
 
   // Tabs: "fuentes" | "generacion" | "chat"
-  const [activeTab, setActiveTab] = useState<'fuentes' | 'generacion' | 'chat' | 'admin'>('fuentes');
+  const [activeTab, setActiveTab] = useState<'fuentes' | 'generacion' | 'validacion' | 'chat' | 'admin'>('fuentes');
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<{role: 'user' | 'assistant'; content: string}[]>([]);
@@ -1751,6 +1939,18 @@ function App() {
             <span className="tab-icon">💬</span>
             <span>Chat</span>
           </button>
+          {authUser && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'validacion'}
+              className={`tab-btn${activeTab === 'validacion' ? ' active' : ''}`}
+              onClick={() => setActiveTab('validacion')}
+            >
+              <span className="tab-icon">🧪</span>
+              <span>Validación</span>
+            </button>
+          )}
           {authUser?.role === 'admin' && (
             <button
               type="button"
@@ -3077,6 +3277,10 @@ function App() {
               />
             </div>
           </div>
+        )}
+
+        {activeTab === 'validacion' && authUser && (
+          <ValidationTab apiFetch={apiFetch} username={authUser.username} />
         )}
 
         {activeTab === 'admin' && authUser?.role === 'admin' && (

@@ -19,6 +19,7 @@ LIBRARY_DIR = "/mnt/shared/pidtt-aec/libraries"
 QA_STORE_DIR = "/mnt/shared/pidtt-aec/qas"
 BATCH_DIR = "/mnt/shared/pidtt-aec/batches"
 MODLOG_DIR = "/mnt/shared/pidtt-aec/moderation"
+VALIDATION_DIR = "/mnt/shared/pidtt-aec/validation"
 LLM_URL = os.environ.get("LLM_URL", "http://192.168.1.68:8005/v1/chat/completions")
 LLM_MODEL = os.environ.get("LLM_MODEL", "citecca-agent")
 HOST = "0.0.0.0"
@@ -165,6 +166,42 @@ def _save_library(username, ids):
 # --- QA store (decisiones aprobar/descartar por P&R, por usuario) ---
 _qa_store_lock = threading.Lock()
 
+# --- Validación entre expertos: votos por usuario ---
+_validation_lock = threading.Lock()
+
+def _validation_path(username):
+    return os.path.join(VALIDATION_DIR, f"{username}.json")
+
+def _load_validation(username):
+    """{key: {v: 'ok'|'no', ts, comment, item: snapshot}}"""
+    p = _validation_path(username)
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+def _save_validation(username, data):
+    os.makedirs(VALIDATION_DIR, exist_ok=True)
+    p = _validation_path(username)
+    tmp = p + f".tmp{os.getpid()}"
+    with open(tmp, "w") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, p)
+
+def _validation_pool():
+    """Pool global: P&R aprobadas por cada usuario. (username, key) -> item."""
+    pool = []
+    if os.path.isdir(QA_STORE_DIR):
+        for fn in sorted(os.listdir(QA_STORE_DIR)):
+            if not fn.endswith(".json"):
+                continue
+            uname = fn[:-5]
+            for k, v in _load_qa_store(uname).items():
+                if isinstance(v, dict) and v.get("d") == "approved":
+                    pool.append((uname, k, v))
+    return pool
+
 def _qa_store_path(username):
     return os.path.join(QA_STORE_DIR, f"{username}.json")
 
@@ -276,6 +313,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_qa_store_get(username)
             if u.path == "/qa-batch":
                 return self._handle_qa_batch_get(username)
+            if u.path == "/validation":
+                return self._handle_validation_get(username, q)
+            if u.path == "/validation/stats":
+                return self._handle_validation_stats(username)
             if u.path.startswith("/admin/"):
                 return self._handle_admin_get(u.path)
             return self._json({"error": "not found"}, 404)
@@ -314,6 +355,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_qa_store_post(username)
             if u.path == "/qa-batch":
                 return self._handle_qa_batch_post(username)
+            if u.path == "/validation":
+                return self._handle_validation_post(username)
             if u.path.startswith("/admin/"):
                 return self._handle_admin_post(u.path)
             return self._json({"error": "not found"}, 404)
@@ -1038,6 +1081,145 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": str(e)}, 500)
+
+    # --- Validación entre expertos ---
+
+    def _handle_validation_get(self, username, q):
+        # Pool global (solo aprobadas) + votos de todos los expertos + estado del usuario.
+        # Filtros opcionales: axis, q (texto), status (mi estado: pend|ok|no|disagree|done)
+        pool = _validation_pool()
+        my_votes = _load_validation(username)
+        # todos los votos de todos los expertos por key
+        all_votes = {}  # key -> {username: {v, comment, ts}}
+        if os.path.isdir(VALIDATION_DIR):
+            for fn in sorted(os.listdir(VALIDATION_DIR)):
+                if not fn.endswith(".json"):
+                    continue
+                vname = fn[:-5]
+                for k, v in _load_validation(vname).items():
+                    if isinstance(v, dict):
+                        all_votes.setdefault(k, {})[vname] = {
+                            "v": v.get("v"), "comment": v.get("comment", ""), "ts": v.get("ts"),
+                        }
+        # snapshot de item por key (para votos a items ya eliminados de la pool)
+
+        fq = q or {}
+        faxis = (fq.get("axis", [""])[0] or "").strip()
+        ftxt = (fq.get("q", [""])[0] or "").strip().lower()
+        fstatus = (fq.get("status", [""])[0] or "").strip()
+
+        rows = []
+        for uname, key, item in pool:
+            votes = all_votes.get(key, {})
+            my = my_votes.get(key)
+            mv = my.get("v") if my else None
+            ok_c = sum(1 for v in votes.values() if v.get("v") == "ok")
+            no_c = sum(1 for v in votes.values() if v.get("v") == "no")
+            disagree = ok_c > 0 and no_c > 0
+            row = {
+                "username": uname, "key": key,
+                "q": item.get("q") or "", "a": item.get("a") or "",
+                "options": item.get("options") or [], "correct": item.get("correct") or "",
+                "scenario": item.get("scenario") or "", "cultural_axis": item.get("cultural_axis") or "",
+                "cite": item.get("cite") or "", "article_ids": item.get("article_ids") or [],
+                "my_vote": mv,
+                "ok_count": ok_c, "no_count": no_c, "disagree": disagree,
+                "votes": votes,
+            }
+            if faxis and row["cultural_axis"] != faxis:
+                continue
+            if ftxt and ftxt not in row["q"].lower() and ftxt not in row["a"].lower() and ftxt not in row["cite"].lower():
+                continue
+            if fstatus == "pend" and mv is not None:
+                continue
+            if fstatus == "ok" and mv != "ok":
+                continue
+            if fstatus == "no" and mv != "no":
+                continue
+            if fstatus == "done" and mv is None:
+                continue
+            if fstatus == "disagree" and not disagree:
+                continue
+            rows.append(row)
+        rows.sort(key=lambda r: (r["my_vote"] is not None, not r["disagree"], r["q"][:40]))
+        return self._json({"items": rows, "total": len(rows)})
+
+    def _handle_validation_stats(self, username):
+        pool = _validation_pool()
+        my_votes = _load_validation(username)
+        all_votes = {}
+        if os.path.isdir(VALIDATION_DIR):
+            for fn in sorted(os.listdir(VALIDATION_DIR)):
+                if not fn.endswith(".json"):
+                    continue
+                vname = fn[:-5]
+                for k, v in _load_validation(vname).items():
+                    if isinstance(v, dict):
+                        all_votes.setdefault(k, {})[vname] = v.get("v")
+        pool_keys = [k for _, k, _ in pool]
+        done = sum(1 for k in pool_keys if my_votes.get(k, {}).get("v"))
+        ok = sum(1 for k in pool_keys if my_votes.get(k, {}).get("v") == "ok")
+        no = sum(1 for k in pool_keys if my_votes.get(k, {}).get("v") == "no")
+        disagree = sum(1 for k in pool_keys
+                       if any(v == "ok" for v in all_votes.get(k, {}).values())
+                       and any(v == "no" for v in all_votes.get(k, {}).values()))
+        # consenso: items con >=2 votos unánimes / items con >=2 votos
+        cons_total = 0
+        cons_unanimous = 0
+        for k in pool_keys:
+            vs = [v for v in all_votes.get(k, {}).values() if v in ("ok", "no")]
+            if len(vs) >= 2:
+                cons_total += 1
+                if all(v == "ok" for v in vs) or all(v == "no" for v in vs):
+                    cons_unanimous += 1
+        by_user = {}
+        for vname in sorted({v for k in pool_keys for v in all_votes.get(k, {})}):
+            vo = sum(1 for k in pool_keys if all_votes.get(k, {}).get(vname) == "ok")
+            vn = sum(1 for k in pool_keys if all_votes.get(k, {}).get(vname) == "no")
+            by_user[vname] = {"ok": vo, "no": vn, "total": vo + vn}
+        return self._json({
+            "pool_total": len(pool_keys),
+            "my_done": done, "my_ok": ok, "my_no": no, "my_pending": len(pool_keys) - done,
+            "disagree": disagree,
+            "consensus": round(100 * cons_unanimous / cons_total) if cons_total else None,
+            "voters": by_user,
+        })
+
+    def _handle_validation_post(self, username):
+        # Votación: {action: 'vote'|'clear', key, vote?: 'ok'|'no', comment?}
+        clen = int(self.headers.get("Content-Length") or 0)
+        if clen <= 0 or clen > 10000:
+            return self._json({"error": "body invalido"}, 400)
+        body = json.loads(self.rfile.read(clen).decode())
+        action = body.get("action")
+        key = (body.get("key") or "").strip()
+        if not key or not isinstance(key, str):
+            return self._json({"error": "key requerida"}, 400)
+        if action == "clear":
+            with _validation_lock:
+                data = _load_validation(username)
+                data.pop(key, None)
+                _save_validation(username, data)
+            return self._json({"ok": True, "my_vote": None})
+        if action != "vote":
+            return self._json({"error": "accion invalida (vote|clear)"}, 400)
+        vote = body.get("vote")
+        if vote not in ("ok", "no"):
+            return self._json({"error": "vote debe ser ok|no"}, 400)
+        comment = (body.get("comment") or "").strip()[:1000]
+        # snapshot del item en el pool (para conservar el contenido aunque se modifique después)
+        item_snap = None
+        for uname, k, it in _validation_pool():
+            if k == key:
+                item_snap = it
+                break
+        if item_snap is None:
+            return self._json({"error": "item no está en la pool aprobada"}, 404)
+        with _validation_lock:
+            data = _load_validation(username)
+            data[key] = {"v": vote, "ts": time.time(), "comment": comment, "item": item_snap}
+            _save_validation(username, data)
+        return self._json({"ok": True, "my_vote": vote})
 
 def _qa_worker(job_id, body, username=None):
     def _set(phase=None, detail=None, pct=None, extra=None):
