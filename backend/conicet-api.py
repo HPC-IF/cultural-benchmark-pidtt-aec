@@ -433,7 +433,7 @@ class Handler(BaseHTTPRequestHandler):
         page_results = results[start:end]
 
         return self._json({
-            "results": page_results,
+            "results": [_normalize_doc(d) for d in page_results],
             "total": total,
             "page": page,
             "per_page": per_page,
@@ -445,7 +445,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "id requerido"}, 400)
         for d in _load_metadata():
             if d["id"] == doc_id:
-                return self._json(d)
+                return self._json(_normalize_doc(d))
         return self._json({"error": "no encontrado"}, 404)
 
     def _handle_qa_status(self, job_id):
@@ -775,7 +775,7 @@ class Handler(BaseHTTPRequestHandler):
             results.append({
                 "id": did,
                 "title": m.get("title", ""),
-                "creators": m.get("creators", ""),
+                "creators": _creators_str(m.get("creators")),
                 "date": m.get("date", ""),
                 "open_access": m.get("open_access", False),
                 "similarity": round(sim, 4),
@@ -1274,7 +1274,7 @@ def _qa_worker(job_id, body, username=None):
                 if q:
                     docs = [d for d in docs if q in (d.get("title") or "").lower() or q in (d.get("description") or "").lower()]
                 if author:
-                    docs = [d for d in docs if author in (d.get("creators") or "").lower()]
+                    docs = [d for d in docs if author in _creators_str(d.get("creators")).lower()]
                 if year_from:
                     docs = [d for d in docs if d.get("date") and d["date"][:4].isdigit() and int(d["date"][:4]) >= int(year_from)]
                 if year_to:
@@ -1299,7 +1299,7 @@ def _qa_worker(job_id, body, username=None):
                 articles.append({
                     "id": m["id"],
                     "title": m.get("title", ""),
-                    "creators": m.get("creators", ""),
+                    "creators": _creators_str(m.get("creators")),
                     "date": m.get("date", ""),
                     "description": m.get("description", ""),
                     "subjects": m.get("subjects", []),
@@ -1864,6 +1864,20 @@ def _scraping_status_data():
             "last_down_at": last_down_at,
         },
     }
+
+
+def _creators_str(c):
+    """Normaliza creators (lista o string) a 'A, B'."""
+    if isinstance(c, list):
+        return ", ".join(str(x) for x in c if x)
+    return (c or "").strip()
+
+
+def _normalize_doc(d):
+    out = dict(d)
+    if "creators" in out:
+        out["creators"] = _creators_str(out.get("creators"))
+    return out
 
 
 def _handle_scraping_status(self):

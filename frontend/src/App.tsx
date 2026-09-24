@@ -2232,8 +2232,12 @@ function App() {
                         <h3 className="preview-title">{doc.title}</h3>
                         <div className="preview-meta">
                           <span className="preview-badge">
-                            {doc.creators ? doc.creators.split(',')[0] : 'Sin autor'}
-                            {doc.creators && doc.creators.split(',').length > 1 && ' et al.'}
+                            {(() => {
+                              const cr = Array.isArray(doc.creators) ? doc.creators.join(', ') : (doc.creators || '');
+                              if (!cr) return 'Sin autor';
+                              const parts = cr.split(',');
+                              return parts.length > 1 ? `${parts[0]} et al.` : parts[0];
+                            })()}
                           </span>
                           {doc.date && <span className="preview-badge">{formatDate(doc.date)}</span>}
                           {doc.open_access ? <span className="preview-badge oa">OA</span> : <span className="preview-badge no-oa">sin PDF</span>}
